@@ -392,14 +392,28 @@ export class StorageService {
   static async fetchAndSyncFromGoogleSheet(customSheetId?: string): Promise<{ success: boolean; totalFetched: number; message: string }> {
     const sheetId = customSheetId || this.getGoogleSheetId();
     try {
-      const response = await fetch(`/api/fetch-sheet-data?sheetId=${encodeURIComponent(sheetId)}`);
-      const data = await response.json();
+      let data: any = null;
 
-      if (!data.success) {
+      try {
+        const response = await fetch(`/api/fetch-sheet-data?sheetId=${encodeURIComponent(sheetId)}`);
+        const contentType = response.headers.get('content-type') || '';
+        if (response.ok && contentType.includes('application/json')) {
+          data = await response.json();
+        }
+      } catch (e) {
+        console.warn('Server fetch endpoint unavailable, using direct client-side sheet connection:', e);
+      }
+
+      // If server API call didn't return valid data, use client-side direct CSV fetch from Google Sheets
+      if (!data || !data.success) {
+        data = await this.clientSideFetchGoogleSheet(sheetId);
+      }
+
+      if (!data || !data.success) {
         return {
           success: false,
           totalFetched: 0,
-          message: data.message || 'ไม่สามารถเชื่อมต่อดึงข้อมูลจาก Google Sheet ได้'
+          message: data?.message || 'ไม่สามารถเชื่อมต่อดึงข้อมูลจาก Google Sheet ได้ โปรดตรวจสอบว่าได้เปิดสิทธิ์แชร์ "ทุกคนที่มีลิงก์ดูได้"'
         };
       }
 
@@ -456,6 +470,202 @@ export class StorageService {
         totalFetched: 0,
         message: `เกิดข้อผิดพลาดในการเชื่อมต่อ: ${err.message || 'โปรดตรวจสอบการเชื่อมต่ออินเทอร์เน็ต'}`
       };
+    }
+  }
+
+  // Client-side fallback to parse Google Sheets CSV directly
+  private static async clientSideFetchGoogleSheet(sheetId: string): Promise<{ success: boolean; csiRecords?: CSIRecord[]; employees?: Employee[]; message?: string }> {
+    try {
+      const parseCSV = (text: string) => {
+        const lines: string[][] = [];
+        let currentRow: string[] = [];
+        let currentCell = '';
+        let inQuotes = false;
+
+        for (let i = 0; i < text.length; i++) {
+          const char = text[i];
+          const nextChar = text[i + 1];
+
+          if (char === '"') {
+            if (inQuotes && nextChar === '"') {
+              currentCell += '"';
+              i++;
+            } else {
+              inQuotes = !inQuotes;
+            }
+          } else if (char === ',' && !inQuotes) {
+            currentRow.push(currentCell.trim());
+            currentCell = '';
+          } else if ((char === '\r' || char === '\n') && !inQuotes) {
+            if (char === '\r' && nextChar === '\n') {
+              i++;
+            }
+            currentRow.push(currentCell.trim());
+            if (currentRow.some(c => c.length > 0)) {
+              lines.push(currentRow);
+            }
+            currentRow = [];
+            currentCell = '';
+          } else {
+            currentCell += char;
+          }
+        }
+        if (currentCell.length > 0 || currentRow.length > 0) {
+          currentRow.push(currentCell.trim());
+          if (currentRow.some(c => c.length > 0)) {
+            lines.push(currentRow);
+          }
+        }
+        return lines;
+      };
+
+      // 1. Fetch CSI Responses
+      const csiUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent('CSI Electronic (การตอบกลับ)')}`;
+      const csiRes = await fetch(csiUrl);
+      const csiRecords: CSIRecord[] = [];
+
+      if (csiRes.ok) {
+        const csvText = await csiRes.text();
+        const rows = parseCSV(csvText);
+
+        for (let i = 1; i < rows.length; i++) {
+          const row = rows[i];
+          if (!row || row.length < 4) continue;
+
+          const timestampRaw = row[0] || '';
+          const site = row[1] || 'PTP';
+          const division = row[2] || 'Biomedical Engineering';
+          const dept = row[3] || 'General';
+          const staffName = row[4] || '';
+          const contactType = row[5] || '';
+          const use_service1 = row[6] || '';
+
+          const parseNum = (val: string) => {
+            const n = parseInt(val, 10);
+            return isNaN(n) ? 5 : Math.max(1, Math.min(5, n));
+          };
+
+          const q1_1 = parseNum(row[7]);
+          const q1_2 = parseNum(row[8]);
+          const q1_3 = parseNum(row[9]);
+          const q1_4 = parseNum(row[10]);
+          const q1_5 = parseNum(row[11]);
+          const q1_6 = parseNum(row[12]);
+          const q1_7 = parseNum(row[13]);
+
+          const use_service2 = row[14] || '';
+          const q2_1 = parseNum(row[15]);
+          const q2_2 = parseNum(row[16]);
+          const q2_3 = parseNum(row[17]);
+          const q2_4 = parseNum(row[18]);
+          const q2_5 = parseNum(row[19]);
+
+          const goodStaff = row[20] || '';
+          const goodReason = row[21] || '';
+          const badStaff = row[22] || '';
+          const badReason = row[23] || '';
+          const extraNote = row[24] || goodReason || '';
+
+          let formattedTime = new Date().toISOString();
+          if (timestampRaw) {
+            const parts = timestampRaw.split(' ');
+            if (parts[0] && parts[0].includes('/')) {
+              const dateParts = parts[0].split('/');
+              if (dateParts.length === 3) {
+                const day = dateParts[0].padStart(2, '0');
+                const month = dateParts[1].padStart(2, '0');
+                let year = parseInt(dateParts[2], 10);
+                if (year > 2500) year -= 543;
+                const timeStr = parts[1] || '00:00:00';
+                formattedTime = `${year}-${month}-${day}T${timeStr}`;
+              }
+            } else {
+              formattedTime = timestampRaw;
+            }
+          }
+
+          csiRecords.push({
+            timestamp: formattedTime,
+            site, division, dept, staffName, contactType,
+            use_service1, q1_1, q1_2, q1_3, q1_4, q1_5, q1_6, q1_7,
+            use_service2, q2_1, q2_2, q2_3, q2_4, q2_5,
+            goodStaff, goodReason, badStaff, badReason, extraNote
+          });
+        }
+      }
+
+      // 2. Fetch Employees
+      const staffUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent('ข้อมูลพนักงาน')}`;
+      const staffRes = await fetch(staffUrl);
+      const employees: Employee[] = [];
+
+      if (staffRes.ok) {
+        const staffCsv = await staffRes.text();
+        const staffRows = parseCSV(staffCsv);
+        if (staffRows.length > 1) {
+          let fullNameIdx = 0;
+          let nicknameIdx = 1;
+          let imgIdx = 2;
+          let usernameIdx = 3;
+          let passIdx = 4;
+
+          const header = staffRows[0].map(h => (h || '').trim().toLowerCase());
+          header.forEach((col, idx) => {
+            if (col.includes('ชื่อ') && !col.includes('เล่น')) fullNameIdx = idx;
+            if (col.includes('เล่น')) nicknameIdx = idx;
+            if (col.includes('รูป') || col.includes('img') || col.includes('pic') || col.includes('photo')) imgIdx = idx;
+            if (col.includes('user')) usernameIdx = idx;
+            if (col.includes('pass')) passIdx = idx;
+          });
+
+          for (let j = 1; j < staffRows.length; j++) {
+            const sRow = staffRows[j];
+            if (sRow && sRow.length >= 2) {
+              const cleanStr = (val: string) => (val || '').replace(/\s*\(?https?:\/\/[^\s)]+\)?/gi, '').trim();
+
+              const fullName = cleanStr(sRow[fullNameIdx] || '');
+              const nickname = cleanStr(sRow[nicknameIdx] || fullName || '');
+              let img = (sRow[imgIdx] || '').trim();
+              const username = (sRow[usernameIdx] || `emp_${j}`).trim();
+              const password = (sRow[passIdx] || '123').trim();
+
+              if (img && !img.startsWith('http')) {
+                img = `https://${img}`;
+              }
+
+              if (!img) {
+                img = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(nickname || fullName || 'user')}&skinColor=f8d25c`;
+              }
+
+              const uUpper = username.toUpperCase();
+              const isAdmin = uUpper.includes('ADMIN') || uUpper.includes('SPV') || uUpper.includes('MGR') || uUpper === '563770';
+
+              if (fullName || nickname || username) {
+                employees.push({
+                  id: `sheet-emp-${username}`,
+                  username,
+                  password,
+                  fullName,
+                  nickname,
+                  club: 'ชมรมเดิน-วิ่ง',
+                  img,
+                  status: 'active',
+                  isAdmin
+                });
+              }
+            }
+          }
+        }
+      }
+
+      return {
+        success: true,
+        csiRecords,
+        employees
+      };
+    } catch (e: any) {
+      console.error('Client-side Google Sheet fetch error:', e);
+      return { success: false, message: `ไม่สามารถดึงข้อมูลจาก Google Sheet ได้: ${e.message}` };
     }
   }
 }

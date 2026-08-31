@@ -326,16 +326,84 @@ export const ActivityLogForm: React.FC<ActivityLogFormProps> = ({
 
               {/* Date Selection */}
               <div>
-                <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">
-                  <i className="fa-solid fa-calendar-day text-emerald-400 mr-2"></i>วันที่ทำกิจกรรม
-                </label>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider">
+                    <i className="fa-solid fa-calendar-day text-emerald-400 mr-2"></i>วันที่ทำกิจกรรม (สามารถบันทึกย้อนหลังได้)
+                  </label>
+                  <span className="text-[11px] font-bold text-emerald-300 bg-emerald-500/20 px-2.5 py-0.5 rounded-full border border-emerald-400/30 flex items-center gap-1">
+                    <i className="fa-solid fa-clock-rotate-left text-xs"></i>
+                    <span>บันทึกย้อนหลังได้</span>
+                  </span>
+                </div>
                 <input
                   type="date"
                   value={activityDate}
+                  max={new Date().toISOString().substring(0, 10)}
                   onChange={e => setActivityDate(e.target.value)}
-                  className="w-full px-4 py-3 rounded-xl bg-slate-900/60 border border-white/15 text-white font-semibold text-sm outline-none focus:border-emerald-400"
+                  className="w-full px-4 py-3 rounded-xl bg-slate-900/60 border border-white/15 text-white font-semibold text-sm outline-none focus:border-emerald-400 cursor-pointer"
                   required
                 />
+                
+                {/* Quick Past Date Selection Buttons */}
+                <div className="flex items-center gap-1.5 flex-wrap mt-2.5">
+                  <span className="text-[10px] text-slate-400 font-bold mr-1">เลือกวันที่ด่วน:</span>
+                  <button
+                    type="button"
+                    onClick={() => setActivityDate(new Date().toISOString().substring(0, 10))}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all ${
+                      activityDate === new Date().toISOString().substring(0, 10)
+                        ? 'bg-emerald-500 text-slate-950 border-emerald-300 shadow-sm'
+                        : 'bg-slate-900 text-slate-300 border-white/10 hover:border-emerald-400'
+                    }`}
+                  >
+                    วันนี้
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const d = new Date();
+                      d.setDate(d.getDate() - 1);
+                      setActivityDate(d.toISOString().substring(0, 10));
+                    }}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all ${
+                      activityDate === new Date(Date.now() - 86400000).toISOString().substring(0, 10)
+                        ? 'bg-emerald-500 text-slate-950 border-emerald-300 shadow-sm'
+                        : 'bg-slate-900 text-slate-300 border-white/10 hover:border-emerald-400'
+                    }`}
+                  >
+                    เมื่อวาน
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const d = new Date();
+                      d.setDate(d.getDate() - 2);
+                      setActivityDate(d.toISOString().substring(0, 10));
+                    }}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all ${
+                      activityDate === new Date(Date.now() - 86400000 * 2).toISOString().substring(0, 10)
+                        ? 'bg-emerald-500 text-slate-950 border-emerald-300 shadow-sm'
+                        : 'bg-slate-900 text-slate-300 border-white/10 hover:border-emerald-400'
+                    }`}
+                  >
+                    2 วันก่อน
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const d = new Date();
+                      d.setDate(d.getDate() - 7);
+                      setActivityDate(d.toISOString().substring(0, 10));
+                    }}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all ${
+                      activityDate === new Date(Date.now() - 86400000 * 7).toISOString().substring(0, 10)
+                        ? 'bg-emerald-500 text-slate-950 border-emerald-300 shadow-sm'
+                        : 'bg-slate-900 text-slate-300 border-white/10 hover:border-emerald-400'
+                    }`}
+                  >
+                    1 สัปดาห์ก่อน
+                  </button>
+                </div>
               </div>
 
               {/* Activity Category Selector */}

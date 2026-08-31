@@ -1,4 +1,19 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import {
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  PieChart,
+  Pie,
+  Cell,
+  Legend,
+  AreaChart,
+  Area,
+  CartesianGrid
+} from 'recharts';
 import { ActivityRecord, Employee, HappyLifeClub } from '../types';
 import { StorageService } from '../services/storage';
 import { HAPPY_LIFE_CLUBS } from '../data/initialData';
@@ -159,6 +174,75 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
 
   const totalSystemMinutes = useMemo(() => {
     return filteredActivities.reduce((sum, a) => sum + a.totalMinutes, 0);
+  }, [filteredActivities]);
+
+  // Chart Data 1: Top Employees by Total Hours
+  const topEmployeeChartData = useMemo(() => {
+    return employeeStats
+      .filter(e => e.totalMinutes > 0)
+      .slice(0, 8)
+      .map(e => ({
+        name: e.nickname || e.fullName.split(' ')[0],
+        fullName: e.fullName,
+        hours: Number((e.totalMinutes / 60).toFixed(1)),
+        minutes: e.totalMinutes,
+        club: e.club
+      }));
+  }, [employeeStats]);
+
+  // Chart Data 2: Hours Breakdown by Club
+  const clubChartData = useMemo(() => {
+    const map: { [club: string]: number } = {};
+    filteredActivities.forEach(a => {
+      map[a.club] = (map[a.club] || 0) + a.totalMinutes;
+    });
+    const colors = ['#10b981', '#06b6d4', '#ec4899', '#8b5cf6', '#f59e0b', '#3b82f6'];
+    return Object.entries(map)
+      .filter(([_, mins]) => mins > 0)
+      .map(([name, mins], idx) => ({
+        name,
+        hours: Number((mins / 60).toFixed(1)),
+        minutes: mins,
+        color: colors[idx % colors.length]
+      }));
+  }, [filteredActivities]);
+
+  // Chart Data 3: Category Breakdown (Happy Life vs HR-PTP vs อื่นๆ)
+  const categoryChartData = useMemo(() => {
+    const map: { [cat: string]: number } = {
+      'Happy Life': 0,
+      'HR-PTP': 0,
+      'อื่นๆ': 0
+    };
+    filteredActivities.forEach(a => {
+      map[a.activityCategory] = (map[a.activityCategory] || 0) + a.totalMinutes;
+    });
+    return [
+      { name: 'Happy Life', value: Number((map['Happy Life'] / 60).toFixed(1)), minutes: map['Happy Life'], color: '#10b981' },
+      { name: 'HR-PTP', value: Number((map['HR-PTP'] / 60).toFixed(1)), minutes: map['HR-PTP'], color: '#14b8a6' },
+      { name: 'อื่นๆ', value: Number((map['อื่นๆ'] / 60).toFixed(1)), minutes: map['อื่นๆ'], color: '#6366f1' }
+    ].filter(c => c.value > 0);
+  }, [filteredActivities]);
+
+  // Chart Data 4: Daily Activity Trend
+  const trendChartData = useMemo(() => {
+    const map: { [date: string]: number } = {};
+    filteredActivities.forEach(a => {
+      const d = a.timestamp ? a.timestamp.substring(0, 10) : '';
+      if (d) {
+        map[d] = (map[d] || 0) + a.totalMinutes;
+      }
+    });
+    const sortedDates = Object.keys(map).sort();
+    return sortedDates.map(date => {
+      const parts = date.split('-');
+      const label = parts.length === 3 ? `${parts[2]}/${parts[1]}` : date;
+      return {
+        date,
+        label,
+        hours: Number((map[date] / 60).toFixed(1))
+      };
+    });
   }, [filteredActivities]);
 
   const handleDeleteActivity = (id: string) => {
@@ -434,6 +518,184 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
             <i className="fa-solid fa-rotate"></i>
             <span>รีเฟรช</span>
           </button>
+        </div>
+      </div>
+
+      {/* Visual Charts Summary Dashboard Section */}
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="font-th font-extrabold text-base text-white flex items-center gap-2">
+            <i className="fa-solid fa-chart-column text-emerald-400"></i>
+            <span>สรุปสถิติกิจกรรม &amp; กราฟเปรียบเทียบ</span>
+          </h2>
+          <span className="text-xs text-emerald-300 font-semibold bg-emerald-500/10 border border-emerald-400/20 px-2.5 py-1 rounded-full flex items-center gap-1">
+            <i className="fa-solid fa-chart-line"></i>
+            <span>กราฟแสดงผลชัดเจน</span>
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          {/* Chart 1: Top Employees Bar Chart */}
+          <div className="glass-panel border border-white/15 rounded-3xl p-5 shadow-xl space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="font-th font-extrabold text-sm text-white flex items-center gap-2">
+                <i className="fa-solid fa-ranking-star text-amber-400"></i>
+                <span>กราฟเปรียบเทียบชั่วโมงพนักงาน (Top 8)</span>
+              </h3>
+              <span className="text-[10px] text-slate-400 font-mono">(หน่วย: ชั่วโมง)</span>
+            </div>
+            
+            {topEmployeeChartData.length > 0 ? (
+              <div className="h-64 w-full pt-2">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={topEmployeeChartData} margin={{ top: 10, right: 10, left: -20, bottom: 25 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#ffffff15" vertical={false} />
+                    <XAxis
+                      dataKey="name"
+                      stroke="#94a3b8"
+                      fontSize={11}
+                      tickLine={false}
+                      angle={-25}
+                      textAnchor="end"
+                    />
+                    <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px', color: '#fff', fontSize: '12px' }}
+                      formatter={(val: any) => [`${val} ชั่วโมง`, 'ชั่วโมงสะสม']}
+                      labelFormatter={(label, payload) => payload?.[0]?.payload?.fullName || label}
+                    />
+                    <Bar dataKey="hours" radius={[6, 6, 0, 0]}>
+                      {topEmployeeChartData.map((_, index) => (
+                        <Cell key={`cell-${index}`} fill={index === 0 ? '#f59e0b' : index === 1 ? '#cbd5e1' : index === 2 ? '#d97706' : '#10b981'} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <div className="h-64 flex items-center justify-center text-xs text-slate-400">
+                ยังไม่มีข้อมูลชั่วโมงกิจกรรมที่จะแสดงในกราฟ
+              </div>
+            )}
+          </div>
+
+          {/* Chart 2: Hours Breakdown by Club (Donut / Pie Chart) */}
+          <div className="glass-panel border border-white/15 rounded-3xl p-5 shadow-xl space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="font-th font-extrabold text-sm text-white flex items-center gap-2">
+                <i className="fa-solid fa-users-rectangle text-cyan-400"></i>
+                <span>สัดส่วนชั่วโมงสะสมตามชมรม</span>
+              </h3>
+              <span className="text-[10px] text-slate-400 font-mono">(ชมรม Happy Life)</span>
+            </div>
+
+            {clubChartData.length > 0 ? (
+              <div className="h-64 w-full flex items-center justify-center pt-2">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={clubChartData}
+                      dataKey="hours"
+                      nameKey="name"
+                      cx="50%"
+                      cy="45%"
+                      innerRadius={50}
+                      outerRadius={80}
+                      paddingAngle={4}
+                      label={({ name, hours }) => `${name}: ${hours}ชม.`}
+                      labelLine={false}
+                    >
+                      {clubChartData.map((entry, index) => (
+                        <Cell key={`cell-club-${index}`} fill={entry.color} />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px', color: '#fff', fontSize: '12px' }}
+                      formatter={(val: any) => [`${val} ชั่วโมง`, 'รวมชั่วโมง']}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <div className="h-64 flex items-center justify-center text-xs text-slate-400">
+                ยังไม่มีข้อมูลชมรมในฟิลเตอร์ที่เลือก
+              </div>
+            )}
+          </div>
+
+          {/* Chart 3: Activity Hours Trend Over Time */}
+          <div className="glass-panel border border-white/15 rounded-3xl p-5 shadow-xl space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="font-th font-extrabold text-sm text-white flex items-center gap-2">
+                <i className="fa-solid fa-chart-line text-teal-400"></i>
+                <span>กราฟแนวโน้มชั่วโมงกิจกรรมตามช่วงเวลา</span>
+              </h3>
+              <span className="text-[10px] text-slate-400 font-mono">(การบันทึกตามวัน)</span>
+            </div>
+
+            {trendChartData.length > 0 ? (
+              <div className="h-64 w-full pt-2">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={trendChartData} margin={{ top: 10, right: 10, left: -20, bottom: 20 }}>
+                    <defs>
+                      <linearGradient id="colorHours" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#14b8a6" stopOpacity={0.8}/>
+                        <stop offset="95%" stopColor="#14b8a6" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#ffffff15" vertical={false} />
+                    <XAxis dataKey="label" stroke="#94a3b8" fontSize={11} tickLine={false} />
+                    <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px', color: '#fff', fontSize: '12px' }}
+                      formatter={(val: any) => [`${val} ชั่วโมง`, 'ชั่วโมงกิจกรรมวันนั้น']}
+                    />
+                    <Area type="monotone" dataKey="hours" stroke="#14b8a6" strokeWidth={3} fillOpacity={1} fill="url(#colorHours)" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <div className="h-64 flex items-center justify-center text-xs text-slate-400">
+                ยังไม่มีประวัติช่วงเวลาทำกิจกรรม
+              </div>
+            )}
+          </div>
+
+          {/* Chart 4: Category Breakdown */}
+          <div className="glass-panel border border-white/15 rounded-3xl p-5 shadow-xl space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="font-th font-extrabold text-sm text-white flex items-center gap-2">
+                <i className="fa-solid fa-layer-group text-indigo-400"></i>
+                <span>เปรียบเทียบหมวดหมู่กิจกรรม (Category Breakdown)</span>
+              </h3>
+              <span className="text-[10px] text-slate-400 font-mono">(Happy Life / HR-PTP / อื่นๆ)</span>
+            </div>
+
+            {categoryChartData.length > 0 ? (
+              <div className="h-64 w-full pt-2">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={categoryChartData} layout="vertical" margin={{ top: 10, right: 20, left: 10, bottom: 10 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#ffffff15" horizontal={false} />
+                    <XAxis type="number" stroke="#94a3b8" fontSize={11} tickLine={false} />
+                    <YAxis dataKey="name" type="category" stroke="#94a3b8" fontSize={11} tickLine={false} width={100} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px', color: '#fff', fontSize: '12px' }}
+                      formatter={(val: any) => [`${val} ชั่วโมง`, 'รวมชั่วโมงหมวดหมู่นี้']}
+                    />
+                    <Bar dataKey="value" radius={[0, 6, 6, 0]}>
+                      {categoryChartData.map((entry, index) => (
+                        <Cell key={`cell-cat-${index}`} fill={entry.color} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <div className="h-64 flex items-center justify-center text-xs text-slate-400">
+                ยังไม่มีข้อมูลหมวดหมู่กิจกรรม
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
