@@ -152,6 +152,44 @@ export class StorageService {
     localStorage.setItem(KEYS.ACTIVITIES, JSON.stringify(activities));
   }
 
+  static syncToGoogleSheets(activities: ActivityRecord[], customUrl?: string): Promise<boolean> {
+    const targetUrl = customUrl || localStorage.getItem('csi_google_sheets_url');
+    if (!targetUrl || !targetUrl.trim()) return Promise.resolve(false);
+
+    const payload = {
+      action: 'sync_activities',
+      timestamp: new Date().toISOString(),
+      totalRecords: activities.length,
+      activities: activities.map(a => ({
+        date: new Date(a.timestamp).toLocaleDateString('th-TH'),
+        username: a.username,
+        fullName: a.fullName,
+        nickname: a.nickname,
+        club: a.club,
+        category: a.activityCategory,
+        activityName: a.activityName,
+        hours: a.hours,
+        minutes: a.minutes,
+        totalMinutes: a.totalMinutes,
+        description: a.description || ''
+      }))
+    };
+
+    return fetch(targetUrl.trim(), {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: {
+        'Content-Type': 'text/plain;charset=utf-8'
+      },
+      body: JSON.stringify(payload)
+    })
+      .then(() => true)
+      .catch(err => {
+        console.error('Google Sheets sync error:', err);
+        return false;
+      });
+  }
+
   static addActivity(record: Omit<ActivityRecord, 'id' | 'timestamp' | 'totalMinutes' | 'dateKey'> & { timestamp?: string }): ActivityRecord {
     const list = this.getActivities();
     const hours = Number(record.hours) || 0;
@@ -172,6 +210,10 @@ export class StorageService {
 
     list.unshift(newRecord);
     this.saveActivities(list);
+
+    // Auto sync new record to Google Sheets if Web App URL is configured
+    this.syncToGoogleSheets([newRecord]);
+
     return newRecord;
   }
 

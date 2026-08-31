@@ -202,8 +202,12 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
 
   // Sync to Web App URL (Google Apps Script)
   const handleSaveGasUrl = () => {
+    if (!gasUrl.trim()) {
+      setSyncMessage({ type: 'error', text: 'กรุณาระบุ Web App URL ก่อนบันทึก' });
+      return;
+    }
     localStorage.setItem('csi_google_sheets_url', gasUrl.trim());
-    setSyncMessage({ type: 'success', text: 'บันทึก Google Apps Script Web App URL เรียบร้อยแล้ว' });
+    setSyncMessage({ type: 'success', text: 'บันทึก Google Apps Script Web App URL เรียบร้อยแล้ว! (เปิดใช้งานซิงค์อัตโนมัติแล้ว)' });
   };
 
   const handleSyncToSheets = async () => {
@@ -241,14 +245,14 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
         method: 'POST',
         mode: 'no-cors',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'text/plain;charset=utf-8'
         },
         body: JSON.stringify(payload)
       });
 
       setSyncMessage({
         type: 'success',
-        text: `ส่งข้อมูลกิจกรรมทั้ง ${filteredActivities.length} รายการไปยัง Google Sheet สำเร็จแล้ว!`
+        text: `ส่งคำขอซิงค์ข้อมูลกิจกรรมทั้ง ${filteredActivities.length} รายการไปยัง Google Sheet เรียบร้อยแล้ว! (โปรดตรวจสอบข้อมูลที่ Google Sheet)`
       });
     } catch (err: any) {
       setSyncMessage({
@@ -665,18 +669,46 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
 
             {/* Option B: Direct Sync via Google Apps Script */}
             <div className="glass-card border border-white/15 rounded-2xl p-4 space-y-3">
-              <div className="font-th font-extrabold text-sm text-teal-300 flex items-center gap-2">
-                <span className="w-6 h-6 rounded-full bg-teal-500 text-slate-950 font-black text-xs flex items-center justify-center">2</span>
-                <span>วิธีที่ 2: เชื่อมต่ออัตโนมัติผ่าน Google Apps Script Web App</span>
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="font-th font-extrabold text-sm text-teal-300 flex items-center gap-2">
+                  <span className="w-6 h-6 rounded-full bg-teal-500 text-slate-950 font-black text-xs flex items-center justify-center">2</span>
+                  <span>วิธีที่ 2: เชื่อมต่ออัตโนมัติผ่าน Google Apps Script Web App</span>
+                </div>
+
+                {/* Connection Status Badge */}
+                {gasUrl.trim() ? (
+                  <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 text-[11px] font-bold px-2.5 py-1 rounded-full flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                    <span>บันทึก Web App URL แล้ว (พร้อมส่งข้อมูล)</span>
+                  </span>
+                ) : (
+                  <span className="bg-amber-500/20 text-amber-300 border border-amber-400/30 text-[11px] font-bold px-2.5 py-1 rounded-full flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-amber-400"></span>
+                    <span>ยังไม่ได้วาง Web App URL</span>
+                  </span>
+                )}
               </div>
 
               <div className="space-y-2 text-xs text-slate-300 leading-relaxed">
                 <ol className="list-decimal list-inside space-y-1 text-slate-300">
                   <li>เปิด Google Sheet ของคุณ แล้วไปที่เมนู <strong>ส่วนขยาย (Extensions)</strong> &gt; <strong>Apps Script</strong></li>
-                  <li>วางโค้ด Apps Script (ดูสคริปต์แนะนำด้านล่าง) แล้วกด <strong>การทบทวน (Deploy)</strong> &gt; <strong>การปรับใช้ใหม่ (New deployment)</strong></li>
+                  <li>วางโค้ด Apps Script ลงในไฟล์ <code>Code.gs</code> แล้วกด <strong>การทำให้ใช้งานได้ (Deploy)</strong> &gt; <strong>การปรับใช้ใหม่ (New deployment)</strong></li>
                   <li>เลือกประเภทเป็น <strong>เว็บแอป (Web app)</strong> และตั้งค่า "ผู้ที่มีสิทธิ์เข้าถึง" เป็น <strong>ทุกคน (Anyone)</strong></li>
-                  <li>คัดลอก <strong>URL ของเว็บแอป (Web App URL)</strong> มาวางใส่ช่องด้านล่างนี้</li>
+                  <li>คัดลอก <strong>URL ของเว็บแอป (Web App URL)</strong> ที่ลงท้ายด้วย <code>/exec</code> มาวางใส่ช่องด้านล่างนี้</li>
                 </ol>
+              </div>
+
+              {/* Troubleshooting warning checklist */}
+              <div className="p-3 bg-amber-950/30 border border-amber-500/30 rounded-xl space-y-1 text-[11px] text-amber-200">
+                <div className="font-bold flex items-center gap-1.5 text-amber-300">
+                  <i className="fa-solid fa-triangle-exclamation"></i>
+                  <span>ข้อควรระวังสำคัญ (หากกดแล้วข้อมูลยังไม่เข้า Google Sheet):</span>
+                </div>
+                <ul className="list-disc list-inside space-y-0.5 text-amber-200/90 pl-1">
+                  <li><strong>ต้องตั้งสิทธิ์เป็น "ทุกคน (Anyone)"</strong>: หากเลือกเป็น "เฉพาะฉัน" Google จะบล็อกการส่งข้อมูลจากแอป</li>
+                  <li><strong>ต้องกด "การปรับใช้ใหม่" (New deployment)</strong> ทุกครั้งที่มีการแก้ไขโค้ด Apps Script</li>
+                  <li><strong>ตรวจสอบ URL</strong>: ต้องเป็น URL ที่ลงท้ายด้วย <code>/exec</code> (ไม่ใช่ <code>/edit</code> หรือ <code>/dev</code>)</li>
+                </ul>
               </div>
 
               <div className="space-y-2 pt-2">
