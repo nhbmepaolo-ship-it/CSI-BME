@@ -319,7 +319,8 @@ async function startServer() {
               results.push(`ส่งผ่าน LINE Messaging API (ID: ${recipient}) สำเร็จ`);
             } else {
               const errJson: any = await pushRes.json().catch(() => ({}));
-              results.push(`Messaging API Push (${recipient}): ${errJson.message || pushRes.statusText}`);
+              const msg = errJson.message || (pushRes.status === 401 ? 'Authentication failed (Token ไม่ถูกต้อง)' : pushRes.statusText);
+              results.push(`Messaging API Push (${recipient}): ${msg}`);
             }
           } catch (e: any) {
             results.push(`Messaging API error: ${e.message}`);
@@ -346,7 +347,11 @@ async function startServer() {
             isSuccess = true;
             results.push(`ส่งไปยัง Webhook (${webhookUrl.substring(0, 30)}...) สำเร็จ`);
           } else {
-            results.push(`Webhook error HTTP ${whRes.status}`);
+            if (whRes.status === 429) {
+              results.push(`Webhook error 429 (URL webhook.site เกินโควตารับข้อมูล)`);
+            } else {
+              results.push(`Webhook error HTTP ${whRes.status}`);
+            }
           }
         } catch (e: any) {
           results.push(`Webhook error: ${e.message}`);
