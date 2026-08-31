@@ -37,20 +37,21 @@ export class StorageService {
         fullName: 'Supattra Kaewsuwan',
         nickname: 'เปี้ยว',
         club: 'ชมรมเดิน-วิ่ง',
-        img: 'https://api.dicebear.com/7.x/avataaars/svg?seed=SupattraKaewsuwan&skinColor=f8d25c&hair=longButNotTooLong&hairColor=2c1b18'
+        img: 'https://img2.pic.in.th/BME_563770..045756.png'
       },
       'MGR_BME': {
         fullName: 'Chalee Meksuwan',
         nickname: 'ปิ้ง',
         club: 'ชมรมเดิน-วิ่ง',
         password: 'Mgr-BME',
-        img: 'https://api.dicebear.com/7.x/avataaars/svg?seed=ChaleeMeksuwan&skinColor=f8d25c&hair=shortWaved&hairColor=2c1b18'
+        img: 'https://img2.pic.in.th/S__6471704_0-removebg-preview.png'
       },
       'SPV_BME': {
         fullName: 'Raschanee Majanit',
         nickname: 'มิน',
         club: 'ชมรมเดิน-วิ่ง',
-        img: 'https://api.dicebear.com/7.x/avataaars/svg?seed=RaschaneeMajanit&skinColor=f8d25c&hair=shortSides&hairColor=2c1b18'
+        password: 'Spv-BME@PTP',
+        img: 'https://img1.pic.in.th/images/970d1e089ad78d07db702e1eab5698c6.png'
       }
     };
 
@@ -101,13 +102,14 @@ export class StorageService {
 
       if (CANONICAL_ADMINS[uUpper]) {
         const canonical = CANONICAL_ADMINS[uUpper];
-        if (emp.fullName !== canonical.fullName || emp.nickname !== canonical.nickname || !emp.isAdmin || (canonical.password && emp.password !== canonical.password)) {
+        if (emp.fullName !== canonical.fullName || emp.nickname !== canonical.nickname || !emp.isAdmin || (canonical.password && emp.password !== canonical.password) || (canonical.img && emp.img !== canonical.img)) {
           hasChanges = true;
         }
-        if (!emp.fullName) updatedFull = canonical.fullName;
-        if (!emp.nickname) updatedNick = canonical.nickname;
-        if (canonical.password && !emp.password) updatedPass = canonical.password;
+        updatedFull = canonical.fullName;
+        updatedNick = canonical.nickname;
+        if (canonical.password) updatedPass = canonical.password;
         if (!emp.club) updatedClub = canonical.club;
+        if (canonical.img) img = canonical.img;
         isAdmin = true;
       }
 

@@ -274,9 +274,9 @@ async function startServer() {
   // API Proxy Route for LINE Messaging API / Webhook / Notify
   app.post('/api/send-line', async (req, res) => {
     try {
-      const { lineTokenOrWebhook, lineChannelToken, lineGroupId, lineUserId, lineWebhookUrl, message } = req.body;
-      if (!message) {
-        return res.status(400).json({ success: false, message: 'กรุณาระบุข้อความที่ต้องการส่ง' });
+      const { lineTokenOrWebhook, lineChannelToken, lineGroupId, lineUserId, lineWebhookUrl, message, flexMessage, flexAltText } = req.body;
+      if (!message && !flexMessage) {
+        return res.status(400).json({ success: false, message: 'กรุณาระบุข้อความหรือ Flex Message ที่ต้องการส่ง' });
       }
 
       const channelToken = (lineChannelToken || (!lineTokenOrWebhook?.startsWith('http') ? lineTokenOrWebhook : '') || '').trim();
@@ -286,6 +286,17 @@ async function startServer() {
 
       let isSuccess = false;
       const results: string[] = [];
+
+      // Build payload for Messaging API Push
+      const pushMessages = flexMessage ? [
+        {
+          type: 'flex',
+          altText: flexAltText || 'รายงานสรุป CSI & กิจกรรม BME PTP',
+          contents: flexMessage
+        }
+      ] : [
+        { type: 'text', text: message }
+      ];
 
       // 1. Send via LINE Messaging API Push Message
       if (channelToken && (targetGroup || targetUser)) {
@@ -300,7 +311,7 @@ async function startServer() {
               },
               body: JSON.stringify({
                 to: recipient,
-                messages: [{ type: 'text', text: message }]
+                messages: pushMessages
               })
             });
             if (pushRes.ok) {
@@ -325,6 +336,7 @@ async function startServer() {
             body: JSON.stringify({
               message,
               text: message,
+              flexMessage,
               groupId: targetGroup,
               userId: targetUser,
               timestamp: new Date().toISOString()

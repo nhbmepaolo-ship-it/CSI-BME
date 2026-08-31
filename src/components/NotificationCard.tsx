@@ -184,12 +184,244 @@ export const NotificationCard: React.FC<NotificationCardProps> = ({ currentUser,
     return card;
   }, [monthLabel, uniqueDeptCount, isCsiComplete, top3BmeStaff, activityHoursSummary]);
 
+  // Generate official LINE Flex Message JSON structure (Matching Image 2 format)
+  const generatedFlexJson = useMemo(() => {
+    const thaiDateToday = new Date().toLocaleDateString('th-TH', {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric'
+    });
+
+    const top3FlexContents: any[] = [];
+    if (top3BmeStaff.length > 0) {
+      top3BmeStaff.forEach((item, idx) => {
+        const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : '🥉';
+        const rankTitle = idx === 0 ? 'อันดับ 1' : idx === 1 ? 'อันดับ 2' : 'อันดับ 3';
+        top3FlexContents.push({
+          type: 'box',
+          layout: 'vertical',
+          margin: 'sm',
+          contents: [
+            {
+              type: 'text',
+              text: `${medal} ${rankTitle}: ${item.name}`,
+              weight: 'bold',
+              size: 'xs',
+              color: '#333333',
+              wrap: true
+            },
+            {
+              type: 'text',
+              text: `└ ⭐ ได้รับประเมิน ${item.count} ครั้ง (คะแนนเฉลี่ย ${item.avgRating}/5)`,
+              size: 'xxs',
+              color: '#666666',
+              margin: 'xs',
+              wrap: true
+            }
+          ]
+        });
+      });
+    } else {
+      top3FlexContents.push({
+        type: 'text',
+        text: '   💖 ยังไม่มีผลประเมินรายบุคคลในเดือนนี้',
+        size: 'xs',
+        color: '#888888'
+      });
+    }
+
+    const activityFlexContents: any[] = [];
+    if (activityHoursSummary.length > 0) {
+      activityHoursSummary.forEach((item, idx) => {
+        const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : '👤';
+        const h = Math.floor(item.totalMins / 60);
+        const m = item.totalMins % 60;
+        activityFlexContents.push({
+          type: 'box',
+          layout: 'vertical',
+          margin: 'sm',
+          contents: [
+            {
+              type: 'text',
+              text: `${medal} ${item.name} (${item.nickname})`,
+              weight: 'bold',
+              size: 'xs',
+              color: '#333333',
+              wrap: true
+            },
+            {
+              type: 'text',
+              text: `└ ⏱️ ${h} ชม. ${m} นาที | 🏅 ${item.club}`,
+              size: 'xxs',
+              color: '#666666',
+              margin: 'xs',
+              wrap: true
+            }
+          ]
+        });
+      });
+    } else {
+      activityFlexContents.push({
+        type: 'text',
+        text: '   🏃‍♀️ ยังไม่มีบันทึกกิจกรรมในเดือนนี้',
+        size: 'xs',
+        color: '#888888'
+      });
+    }
+
+    return {
+      type: 'bubble',
+      size: 'mega',
+      header: {
+        type: 'box',
+        layout: 'vertical',
+        backgroundColor: '#00897b',
+        paddingAll: 'lg',
+        contents: [
+          {
+            type: 'text',
+            text: '📢 รายงานสรุป CSI & กิจกรรม BME PTP',
+            weight: 'bold',
+            color: '#FFFFFF',
+            size: 'md',
+            wrap: true
+          },
+          {
+            type: 'text',
+            text: `📅 ประจำวันที่: ${thaiDateToday}`,
+            color: '#E0F2F1',
+            size: 'xs',
+            margin: 'xs',
+            wrap: true
+          },
+          {
+            type: 'text',
+            text: `🗓️ รอบเดือน: ${monthLabel}`,
+            color: '#E0F2F1',
+            size: 'xs',
+            margin: 'none',
+            wrap: true
+          }
+        ]
+      },
+      body: {
+        type: 'box',
+        layout: 'vertical',
+        paddingAll: 'lg',
+        spacing: 'md',
+        contents: [
+          {
+            type: 'box',
+            layout: 'vertical',
+            backgroundColor: '#E8F8F0',
+            cornerRadius: 'md',
+            paddingAll: 'md',
+            contents: [
+              {
+                type: 'text',
+                text: isCsiComplete
+                  ? '✅ บรรลุเป้าหมายแล้ว! (ประเมินครบ 20 แผนก)'
+                  : `⏳ กำลังสะสมประเมิน CSI: ${uniqueDeptCount}/20 แผนก (ขาดอีก ${20 - uniqueDeptCount} แผนก)`,
+                weight: 'bold',
+                color: '#0F5132',
+                size: 'xs',
+                wrap: true
+              }
+            ]
+          },
+          {
+            type: 'separator',
+            color: '#E0E0E0',
+            margin: 'md'
+          },
+          {
+            type: 'box',
+            layout: 'vertical',
+            spacing: 'xs',
+            contents: [
+              {
+                type: 'text',
+                text: '💖 1. สรุปผลประเมิน CSI รายสัปดาห์',
+                weight: 'bold',
+                color: '#00897b',
+                size: 'sm'
+              },
+              {
+                type: 'text',
+                text: `🏥 แผนกที่ร่วมประเมิน (ไม่ซ้ำ): ${uniqueDeptCount}/20 แผนก`,
+                size: 'xs',
+                color: '#333333',
+                margin: 'xs'
+              },
+              {
+                type: 'text',
+                text: '🏆 Top 3 BME ที่ได้รับประเมินสูงสุด:',
+                weight: 'bold',
+                size: 'xs',
+                color: '#555555',
+                margin: 'sm'
+              },
+              ...top3FlexContents
+            ]
+          },
+          {
+            type: 'separator',
+            color: '#E0E0E0',
+            margin: 'md'
+          },
+          {
+            type: 'box',
+            layout: 'vertical',
+            spacing: 'xs',
+            contents: [
+              {
+                type: 'text',
+                text: '🏃‍♂️ 2. สรุปชั่วโมงกิจกรรม Happy Life & HR-PTP',
+                weight: 'bold',
+                color: '#00897b',
+                size: 'sm'
+              },
+              ...activityFlexContents
+            ]
+          }
+        ]
+      },
+      footer: {
+        type: 'box',
+        layout: 'vertical',
+        paddingAll: 'md',
+        contents: [
+          {
+            type: 'text',
+            text: '💙 Biomedical Engineering (BME PTP)',
+            align: 'center',
+            color: '#00897b',
+            weight: 'bold',
+            size: 'xs'
+          }
+        ]
+      }
+    };
+  }, [monthLabel, uniqueDeptCount, isCsiComplete, top3BmeStaff, activityHoursSummary]);
+
+  const [previewMode, setPreviewMode] = useState<'flex' | 'text' | 'json'>('flex');
+
   const handleCopyCard = async () => {
     try {
       await navigator.clipboard.writeText(generatedCardText);
-      showToast('success', 'คัดลอกข้อความการ์ดสรุปเข้า Clipboard เรียบร้อยแล้ว! สามารถนำไปกดวาง (Paste) ใน LINE ได้ทันที');
+      showToast('success', 'คัดลอกข้อความการ์ดสรุปเข้า Clipboard เรียบร้อยแล้ว!');
     } catch {
-      showToast('error', 'ไม่สามารถคัดลอกได้โดยอัตโนมัติ โปรดคลุมดำข้อความและคัดลอกด้วยตนเอง');
+      showToast('error', 'ไม่สามารถคัดลอกได้โดยอัตโนมัติ');
+    }
+  };
+
+  const handleCopyFlexJson = async () => {
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(generatedFlexJson, null, 2));
+      showToast('success', 'คัดลอก Flex Message JSON เรียบร้อยแล้ว!');
+    } catch {
+      showToast('error', 'ไม่สามารถคัดลอกได้');
     }
   };
 
@@ -245,12 +477,14 @@ export const NotificationCard: React.FC<NotificationCardProps> = ({ currentUser,
             lineWebhookUrl,
             lineGroupId: settings.lineGroupId?.trim(),
             lineUserId: settings.lineUserId?.trim(),
-            message: generatedCardText
+            message: generatedCardText,
+            flexMessage: generatedFlexJson,
+            flexAltText: 'รายงานสรุป CSI & กิจกรรม BME PTP'
           })
         });
         const data = await res.json();
         if (data.success) {
-          showToast('success', data.message || 'ส่งการ์ดประกาศไปยัง LINE เรียบร้อยแล้ว!');
+          showToast('success', data.message || 'ส่งการ์ดประกาศ Flex Message ไปยัง LINE เรียบร้อยแล้ว!');
         } else {
           showToast('error', data.message || 'ส่งไปยัง LINE ไม่สำเร็จ โปรดตรวจสอบ Token หรือ Webhook URL');
         }
@@ -343,12 +577,196 @@ export const NotificationCard: React.FC<NotificationCardProps> = ({ currentUser,
               <div className="w-10 h-1 bg-slate-800 rounded-full"></div>
             </div>
 
-            {/* Simulated Chat Message Bubble - Clean Dark LINE Theme */}
-            <div className="rounded-2xl border border-slate-700/60 bg-slate-900 p-4 shadow-xl">
-              <div className="text-[12px] font-sans text-slate-100 whitespace-pre-wrap leading-relaxed max-h-[420px] overflow-y-auto pr-1">
-                {generatedCardText}
-              </div>
+            {/* Mode Selector Tabs */}
+            <div className="flex items-center justify-center gap-1 p-1 bg-slate-900 border border-slate-800 rounded-xl">
+              <button
+                type="button"
+                onClick={() => setPreviewMode('flex')}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all flex items-center gap-1 ${
+                  previewMode === 'flex'
+                    ? 'bg-emerald-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                }`}
+              >
+                <i className="fa-brands fa-line text-xs"></i>
+                <span>LINE Flex</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setPreviewMode('text')}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all flex items-center gap-1 ${
+                  previewMode === 'text'
+                    ? 'bg-emerald-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                }`}
+              >
+                <i className="fa-solid fa-align-left text-[10px]"></i>
+                <span>ข้อความ</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setPreviewMode('json')}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all flex items-center gap-1 ${
+                  previewMode === 'json'
+                    ? 'bg-emerald-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                }`}
+              >
+                <i className="fa-solid fa-code text-[10px]"></i>
+                <span>JSON</span>
+              </button>
             </div>
+
+            {/* Preview Card */}
+            {previewMode === 'flex' && (
+              /* LINE Flex Message Card - Styled matching Image 2 */
+              <div className="rounded-2xl border border-slate-300 bg-white overflow-hidden shadow-2xl text-slate-800 max-h-[440px] overflow-y-auto">
+                {/* Header Banner - Deep Teal */}
+                <div className="bg-[#00897b] text-white p-4 space-y-1 border-b border-[#00796b]">
+                  <div className="flex items-center gap-2">
+                    <span className="text-base">📢</span>
+                    <h3 className="font-extrabold text-sm text-white leading-tight">
+                      รายงานสรุป CSI & กิจกรรม BME PTP
+                    </h3>
+                  </div>
+                  <div className="text-[11px] text-teal-100 flex items-center gap-2 pt-0.5">
+                    <span>📅 ประจำวันที่: {new Date().toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</span>
+                  </div>
+                  <div className="text-[11px] text-teal-100 flex items-center gap-2">
+                    <span>🗓️ รอบเดือน: {monthLabel}</span>
+                  </div>
+                </div>
+
+                {/* Body Content */}
+                <div className="p-4 space-y-3 bg-white text-xs">
+                  {/* Status Banner Box */}
+                  <div className={`p-3 rounded-xl border font-bold flex items-center gap-2 ${
+                    isCsiComplete
+                      ? 'bg-[#E8F8F0] border-[#a3e6cd] text-[#0F5132]'
+                      : 'bg-amber-50 border-amber-200 text-amber-900'
+                  }`}>
+                    <span className="text-sm">{isCsiComplete ? '✅' : '⏳'}</span>
+                    <span>
+                      {isCsiComplete
+                        ? 'บรรลุเป้าหมายแล้ว! (ประเมินครบ 20 แผนก)'
+                        : `กำลังสะสมประเมิน CSI: ${uniqueDeptCount}/20 แผนก (ขาดอีก ${20 - uniqueDeptCount} แผนก)`}
+                    </span>
+                  </div>
+
+                  <hr className="border-slate-200" />
+
+                  {/* Section 1: CSI Summary */}
+                  <div className="space-y-2">
+                    <h4 className="font-extrabold text-[#00897b] text-xs flex items-center gap-1.5">
+                      <span>💖</span>
+                      <span>1. สรุปผลประเมิน CSI รายสัปดาห์</span>
+                    </h4>
+
+                    <div className="text-slate-700 pl-1">
+                      <span>🏥 แผนกที่ร่วมประเมิน (ไม่ซ้ำ): </span>
+                      <span className="font-extrabold text-slate-900">{uniqueDeptCount}/20 แผนก</span>
+                    </div>
+
+                    <div className="pt-1">
+                      <div className="font-bold text-slate-600 text-[11px] mb-1">
+                        🏆 Top 3 BME ที่ได้รับประเมินสูงสุด:
+                      </div>
+
+                      {top3BmeStaff.length > 0 ? (
+                        <div className="space-y-2 pl-1">
+                          {top3BmeStaff.map((item, idx) => {
+                            const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : '🥉';
+                            const rankTitle = idx === 0 ? 'อันดับ 1' : idx === 1 ? 'อันดับ 2' : 'อันดับ 3';
+                            return (
+                              <div key={idx} className="space-y-0.5">
+                                <div className="font-bold text-slate-900 flex items-center gap-1">
+                                  <span>{medal}</span>
+                                  <span>{rankTitle}:</span>
+                                  <span className="text-slate-800">{item.name}</span>
+                                </div>
+                                <div className="text-[11px] text-slate-500 pl-5 font-mono">
+                                  └ ⭐ ได้รับประเมิน <strong className="text-slate-800 font-bold">{item.count} ครั้ง</strong> (คะแนนเฉลี่ย {item.avgRating}/5)
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="text-slate-400 italic text-[11px] pl-2">
+                          💖 ยังไม่มีผลประเมินรายบุคคลในเดือนนี้
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <hr className="border-slate-200" />
+
+                  {/* Section 2: Activity Hours Summary */}
+                  <div className="space-y-2">
+                    <h4 className="font-extrabold text-[#00897b] text-xs flex items-center gap-1.5">
+                      <span>🏃‍♂️</span>
+                      <span>2. สรุปชั่วโมงกิจกรรม Happy Life & HR-PTP</span>
+                    </h4>
+
+                    {activityHoursSummary.length > 0 ? (
+                      <div className="space-y-2 pl-1">
+                        {activityHoursSummary.map((item, idx) => {
+                          const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : '👤';
+                          const h = Math.floor(item.totalMins / 60);
+                          const m = item.totalMins % 60;
+                          return (
+                            <div key={idx} className="space-y-0.5">
+                              <div className="font-bold text-slate-900 flex items-center gap-1">
+                                <span>{medal}</span>
+                                <span>{item.name} ({item.nickname})</span>
+                              </div>
+                              <div className="text-[11px] text-slate-500 pl-5 font-mono">
+                                └ ⏱️ <strong className="text-slate-800 font-bold">{h} ชม. {m} นาที</strong> | 🏅 {item.club}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="text-slate-400 italic text-[11px] pl-2">
+                        🏃‍♀️ ยังไม่มีบันทึกกิจกรรมในเดือนนี้
+                      </div>
+                    )}
+                  </div>
+
+                  <hr className="border-slate-200" />
+
+                  {/* Footer */}
+                  <div className="text-center font-extrabold text-[#00897b] text-[11px] pt-1">
+                    💙 Biomedical Engineering (BME PTP)
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {previewMode === 'text' && (
+              <div className="rounded-2xl border border-slate-700/60 bg-slate-900 p-4 shadow-xl">
+                <div className="text-[12px] font-sans text-slate-100 whitespace-pre-wrap leading-relaxed max-h-[420px] overflow-y-auto pr-1">
+                  {generatedCardText}
+                </div>
+              </div>
+            )}
+
+            {previewMode === 'json' && (
+              <div className="rounded-2xl border border-slate-700/60 bg-slate-900 p-3 shadow-xl">
+                <div className="flex justify-end mb-2">
+                  <button
+                    onClick={handleCopyFlexJson}
+                    className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[10px] font-bold"
+                  >
+                    <i className="fa-regular fa-copy mr-1"></i>คัดลอก JSON
+                  </button>
+                </div>
+                <pre className="text-[10px] font-mono text-emerald-300 max-h-[380px] overflow-y-auto overflow-x-auto p-2 bg-slate-950 rounded-xl leading-tight select-all">
+                  {JSON.stringify(generatedFlexJson, null, 2)}
+                </pre>
+              </div>
+            )}
 
             {/* Direct Quick Actions under preview */}
             <div className="space-y-2 pt-1">
@@ -373,11 +791,11 @@ export const NotificationCard: React.FC<NotificationCardProps> = ({ currentUser,
 
                 <button
                   type="button"
-                  onClick={handleCopyCard}
+                  onClick={handleCopyFlexJson}
                   className="py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-[11px] border border-slate-700 flex items-center justify-center gap-1.5 transition-all"
                 >
-                  <i className="fa-regular fa-copy text-amber-400"></i>
-                  <span>คัดลอกข้อความ</span>
+                  <i className="fa-solid fa-code text-emerald-400"></i>
+                  <span>คัดลอก Flex JSON</span>
                 </button>
               </div>
             </div>
