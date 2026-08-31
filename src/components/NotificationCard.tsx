@@ -426,8 +426,12 @@ export const NotificationCard: React.FC<NotificationCardProps> = ({ currentUser,
   };
 
   const handleShareToLineApp = () => {
-    const encodedText = encodeURIComponent(generatedCardText);
-    const lineUrl = `https://line.me/R/msg/text/?${encodedText}`;
+    // LINE social share links (social-plugins.line.me) fail with HTTP 400 if text parameter is too long (> 500 chars)
+    const textToShare = generatedCardText.length > 500
+      ? generatedCardText.substring(0, 480) + '...\n\n(อ่านรายละเอียดฉบับเต็มเพิ่มเติมได้ในระบบ)'
+      : generatedCardText;
+    const encodedText = encodeURIComponent(textToShare);
+    const lineUrl = `https://line.me/R/share?text=${encodedText}`;
     window.open(lineUrl, '_blank');
   };
 
@@ -482,14 +486,14 @@ export const NotificationCard: React.FC<NotificationCardProps> = ({ currentUser,
             flexAltText: 'รายงานสรุป CSI & กิจกรรม BME PTP'
           })
         });
-        const data = await res.json();
+        const data = await res.json().catch(() => ({ success: false, message: `Server HTTP ${res.status}` }));
         if (data.success) {
           showToast('success', data.message || 'ส่งการ์ดประกาศ Flex Message ไปยัง LINE เรียบร้อยแล้ว!');
         } else {
           showToast('error', data.message || 'ส่งไปยัง LINE ไม่สำเร็จ โปรดตรวจสอบ Token หรือ Webhook URL');
         }
-      } catch {
-        showToast('error', 'ไม่สามารถเชื่อมต่อ Server เพื่อส่ง LINE ได้');
+      } catch (err: any) {
+        showToast('error', `ไม่สามารถเชื่อมต่อ Server เพื่อส่ง LINE ได้ (${err?.message || 'Network Error'})`);
       } finally {
         setIsSubmitting(false);
       }
@@ -512,14 +516,14 @@ export const NotificationCard: React.FC<NotificationCardProps> = ({ currentUser,
             message: generatedCardText
           })
         });
-        const data = await res.json();
+        const data = await res.json().catch(() => ({ success: false, message: `Server HTTP ${res.status}` }));
         if (data.success) {
           showToast('success', data.message || 'ส่งการ์ดประกาศไปยัง Telegram เรียบร้อยแล้ว!');
         } else {
           showToast('error', data.message || 'ส่งไปยัง Telegram ไม่สำเร็จ โปรดตรวจสอบ Bot Token & Chat ID');
         }
-      } catch {
-        showToast('error', 'ไม่สามารถเชื่อมต่อ Server เพื่อส่ง Telegram ได้');
+      } catch (err: any) {
+        showToast('error', `ไม่สามารถเชื่อมต่อ Server เพื่อส่ง Telegram ได้ (${err?.message || 'Network Error'})`);
       } finally {
         setIsSubmitting(false);
       }

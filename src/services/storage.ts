@@ -467,7 +467,7 @@ export class StorageService {
         const parsed = JSON.parse(data);
         return {
           lineWebhookUrl: parsed.lineWebhookUrl || 'https://webhook.site/f6b4e22d-2b91-4ac3-93a7-939af98716f3',
-          lineChannelToken: parsed.lineChannelToken || 'uiEPGyvhZMjFZkGPPejqVl8s5Dvl1T2Kuay055b1twE20qzxH3CdtupwB0oBWu6ZVYvj3K+rz9FF1Hi+ZUXWShiuf1yEzRdNOVjsp6xOB1cmavWK2Qs/q4g3+nJp6mSr9Pv18bMTCUXkfHFZsVMDdAdB04t89/1O/w1cDnyilFU=',
+          lineChannelToken: parsed.lineChannelToken && !parsed.lineChannelToken.startsWith('uiEPGy') ? parsed.lineChannelToken : 'wg1swtQ3O2KBtBTa461HHn9gRzygFKVYykKBWUI3F4IPSk7HnbXNz+/3zn05pBnfVYvj3K+rz9FF1Hi+ZUXWShiuf1yEzRdNOVjsp6xOB1cPdhzSSxHQr/VrZYWn1I8HOsD9aP3zs0Npg8DRyfekYwdB04t89/1O/w1cDnyilFU=',
           lineGroupId: parsed.lineGroupId || 'C1f1109f61de6683b2337dfa8d3a5ba4d',
           lineUserId: parsed.lineUserId || 'Ucbf8c9e32fc2606a570a51bbc595d5e9',
           telegramBotToken: parsed.telegramBotToken || '',
@@ -477,7 +477,7 @@ export class StorageService {
     }
     return {
       lineWebhookUrl: 'https://webhook.site/f6b4e22d-2b91-4ac3-93a7-939af98716f3',
-      lineChannelToken: 'uiEPGyvhZMjFZkGPPejqVl8s5Dvl1T2Kuay055b1twE20qzxH3CdtupwB0oBWu6ZVYvj3K+rz9FF1Hi+ZUXWShiuf1yEzRdNOVjsp6xOB1cmavWK2Qs/q4g3+nJp6mSr9Pv18bMTCUXkfHFZsVMDdAdB04t89/1O/w1cDnyilFU=',
+      lineChannelToken: 'wg1swtQ3O2KBtBTa461HHn9gRzygFKVYykKBWUI3F4IPSk7HnbXNz+/3zn05pBnfVYvj3K+rz9FF1Hi+ZUXWShiuf1yEzRdNOVjsp6xOB1cPdhzSSxHQr/VrZYWn1I8HOsD9aP3zs0Npg8DRyfekYwdB04t89/1O/w1cDnyilFU=',
       lineGroupId: 'C1f1109f61de6683b2337dfa8d3a5ba4d',
       lineUserId: 'Ucbf8c9e32fc2606a570a51bbc595d5e9',
       telegramBotToken: '',
