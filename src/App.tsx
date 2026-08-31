@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Employee } from './types';
 import { StorageService } from './services/storage';
+import { isAuthorizedAdminUser } from './data/initialData';
 import { CSIForm } from './components/CSIForm';
 import { CSIDashboard } from './components/CSIDashboard';
 import { BMEStarVote } from './components/BMEStarVote';
@@ -236,7 +237,7 @@ export default function App() {
             การจัดการ & ประกาศ
           </div>
 
-          {currentUser?.isAdmin && (
+          {isAuthorizedAdminUser(currentUser) && (
             <button
               onClick={() => { setActivePage('staff-mgr'); setSidebarOpen(false); }}
               className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl font-th text-xs font-bold transition-all ${
@@ -390,7 +391,7 @@ export default function App() {
           )}
 
           {activePage === 'card-notify' && (
-            <NotificationCard key={syncVersion} showToast={showToast} />
+            <NotificationCard key={syncVersion} currentUser={currentUser} showToast={showToast} />
           )}
         </div>
       </main>

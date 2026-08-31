@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Employee, HappyLifeClub } from '../types';
 import { StorageService } from '../services/storage';
-import { HAPPY_LIFE_CLUBS } from '../data/initialData';
+import { HAPPY_LIFE_CLUBS, isAuthorizedAdminUser } from '../data/initialData';
 
 interface StaffManagementProps {
   currentUser: Employee | null;
@@ -54,14 +54,16 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ currentUser, s
     loadData();
   }, []);
 
-  if (!currentUser?.isAdmin) {
+  if (!isAuthorizedAdminUser(currentUser)) {
     return (
-      <div className="min-h-full bg-slate-950 p-8 text-center text-slate-400">
-        <div className="w-16 h-16 bg-rose-500/20 text-rose-400 rounded-3xl flex items-center justify-center mx-auto text-3xl mb-4">
-          <i className="fa-solid fa-shield-halved"></i>
+      <div className="min-h-full bg-slate-950 p-8 text-center text-slate-400 flex flex-col items-center justify-center">
+        <div className="w-16 h-16 bg-rose-500/20 text-rose-400 rounded-3xl flex items-center justify-center text-3xl mb-4 border border-rose-500/30">
+          <i className="fa-solid fa-lock"></i>
         </div>
-        <h2 className="font-th font-extrabold text-xl text-white">เฉพาะผู้ดูแลระบบ (Admin) เท่านั้น</h2>
-        <p className="text-xs text-slate-400 mt-2">สิทธิ์เข้าถึงหน้านี้เฉพาะ SPV_BME, MGR_BME และ 563770</p>
+        <h2 className="font-th font-extrabold text-xl text-white">ไม่มีสิทธิ์เข้าถึงหน้าตั้งค่าผู้ดูแลระบบ</h2>
+        <p className="text-sm text-slate-300 mt-2 max-w-md">
+          หน้าการตั้งค่าพนักงาน ชมรม และระบบนี้ จำกัดสิทธิ์สำหรับผู้ดูแลระบบ 3 บัญชีผู้ใช้เท่านั้น: <strong className="text-emerald-400 font-mono">SPV_BME</strong>, <strong className="text-emerald-400 font-mono">MGR_BME</strong> และ <strong className="text-emerald-400 font-mono">563770</strong>
+        </p>
       </div>
     );
   }

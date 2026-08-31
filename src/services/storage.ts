@@ -1,4 +1,4 @@
-import { Employee, CSIRecord, VoteRecord, ActivityRecord, CardAnnouncementSettings } from '../types';
+import { Employee, CSIRecord, VoteRecord, ActivityRecord, CardAnnouncementSettings, HappyLifeClub } from '../types';
 import { INITIAL_EMPLOYEES, INITIAL_CSI_RECORDS, INITIAL_VOTES, INITIAL_ACTIVITIES } from '../data/initialData';
 
 const KEYS = {
@@ -32,6 +32,12 @@ export class StorageService {
     const cleanedList: Employee[] = [];
     const seenUsernames = new Set<string>();
 
+    const CANONICAL_ADMINS: { [key: string]: { fullName: string; nickname: string; club: HappyLifeClub } } = {
+      '563770': { fullName: 'สมชาย ใจดี', nickname: 'โจ', club: 'ชมรมฟุตบอล' },
+      'MGR_BME': { fullName: 'สุรชัย ผู้จัดการ', nickname: 'ป๋อง', club: 'ชมรมแบตมินตัน' },
+      'SPV_BME': { fullName: 'ประวิทย์ ซูเปอร์ไวเซอร์', nickname: 'วิทย์', club: 'ชมรมเดิน-วิ่ง' }
+    };
+
     for (const emp of list) {
       const cleanNick = cleanStr(emp.nickname);
       const cleanFull = cleanStr(emp.fullName);
@@ -42,12 +48,29 @@ export class StorageService {
         continue;
       }
 
-      if (!cleanNick && !cleanFull) {
+      if (!cleanNick && !cleanFull && !emp.username) {
         hasChanges = true;
         continue;
       }
 
-      const key = (emp.username || cleanFull).toLowerCase();
+      const uUpper = (emp.username || '').trim().toUpperCase();
+      let updatedNick = cleanNick || cleanFull;
+      let updatedFull = cleanFull || cleanNick;
+      let updatedClub: HappyLifeClub = (emp.club as HappyLifeClub) || 'ชมรมเดิน-วิ่ง';
+      let isAdmin = emp.isAdmin || false;
+
+      if (CANONICAL_ADMINS[uUpper]) {
+        const canonical = CANONICAL_ADMINS[uUpper];
+        if (emp.fullName !== canonical.fullName || emp.nickname !== canonical.nickname || !emp.isAdmin) {
+          hasChanges = true;
+        }
+        updatedFull = canonical.fullName;
+        updatedNick = canonical.nickname;
+        if (!emp.club) updatedClub = canonical.club;
+        isAdmin = true;
+      }
+
+      const key = (emp.username || updatedFull).toLowerCase();
       if (seenUsernames.has(key)) {
         hasChanges = true;
         continue;
@@ -56,20 +79,32 @@ export class StorageService {
 
       let img = emp.img;
       if (img && img.includes('images.unsplash.com')) {
-        img = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(cleanNick || cleanFull)}&skinColor=f8d25c`;
+        img = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(updatedNick || updatedFull)}&skinColor=f8d25c`;
         hasChanges = true;
       }
 
-      if (cleanNick !== emp.nickname || cleanFull !== emp.fullName) {
+      if (updatedNick !== emp.nickname || updatedFull !== emp.fullName) {
         hasChanges = true;
       }
 
       cleanedList.push({
         ...emp,
-        nickname: cleanNick || cleanFull,
-        fullName: cleanFull || cleanNick,
+        nickname: updatedNick,
+        fullName: updatedFull,
+        club: updatedClub,
+        isAdmin,
         img
       });
+    }
+
+    // Ensure all 3 canonical admin accounts exist in the list
+    for (const initialAdmin of INITIAL_EMPLOYEES) {
+      const uKey = initialAdmin.username.toLowerCase();
+      if (!seenUsernames.has(uKey)) {
+        cleanedList.unshift(initialAdmin);
+        seenUsernames.add(uKey);
+        hasChanges = true;
+      }
     }
 
     if (hasChanges) {
@@ -164,7 +199,27 @@ export class StorageService {
 
   static addVote(voter: string, category: string, nominee: string, voteMonth: string): { success: boolean; message: string; monthKey?: string } {
     const votes = this.getVotes();
+    const employees = this.getEmployees();
     const userLower = voter.trim().toLowerCase();
+
+    // Validate voter vs nominee
+    const voterEmp = employees.find(e => e.username.toLowerCase() === userLower || e.fullName === voter);
+    const nomineeEmp = employees.find(e => e.fullName === nominee || `${e.fullName} (${e.nickname})` === nominee);
+
+    if (voterEmp && nomineeEmp) {
+      if (voterEmp.id === nomineeEmp.id || voterEmp.username.toLowerCase() === nomineeEmp.username.toLowerCase()) {
+        return {
+          success: false,
+          message: 'ไม่สามารถลงคะแนนโหวตให้ตนเองได้'
+        };
+      }
+      if (voterEmp.club && nomineeEmp.club && voterEmp.club.trim().toLowerCase() === nomineeEmp.club.trim().toLowerCase()) {
+        return {
+          success: false,
+          message: `ไม่สามารถลงคะแนนโหวตให้เพื่อนพนักงานในทีม/ชมรมเดียวกัน (${voterEmp.club}) ได้`
+        };
+      }
+    }
 
     // Check if user already voted in this category and month
     const existing = votes.find(
@@ -365,10 +420,23 @@ export class StorageService {
   static getCardSettings(): CardAnnouncementSettings {
     const data = localStorage.getItem(KEYS.CARD_SETTINGS);
     if (data) {
-      try { return JSON.parse(data); } catch { return {}; }
+      try {
+        const parsed = JSON.parse(data);
+        return {
+          lineWebhookUrl: parsed.lineWebhookUrl || 'https://webhook.site/f6b4e22d-2b91-4ac3-93a7-939af98716f3',
+          lineChannelToken: parsed.lineChannelToken || 'uiEPGyvhZMjFZkGPPejqVl8s5Dvl1T2Kuay055b1twE20qzxH3CdtupwB0oBWu6ZVYvj3K+rz9FF1Hi+ZUXWShiuf1yEzRdNOVjsp6xOB1cmavWK2Qs/q4g3+nJp6mSr9Pv18bMTCUXkfHFZsVMDdAdB04t89/1O/w1cDnyilFU=',
+          lineGroupId: parsed.lineGroupId || 'C1f1109f61de6683b2337dfa8d3a5ba4d',
+          lineUserId: parsed.lineUserId || 'Ucbf8c9e32fc2606a570a51bbc595d5e9',
+          telegramBotToken: parsed.telegramBotToken || '',
+          telegramChatId: parsed.telegramChatId || ''
+        };
+      } catch { return {}; }
     }
     return {
-      lineWebhookUrl: '',
+      lineWebhookUrl: 'https://webhook.site/f6b4e22d-2b91-4ac3-93a7-939af98716f3',
+      lineChannelToken: 'uiEPGyvhZMjFZkGPPejqVl8s5Dvl1T2Kuay055b1twE20qzxH3CdtupwB0oBWu6ZVYvj3K+rz9FF1Hi+ZUXWShiuf1yEzRdNOVjsp6xOB1cmavWK2Qs/q4g3+nJp6mSr9Pv18bMTCUXkfHFZsVMDdAdB04t89/1O/w1cDnyilFU=',
+      lineGroupId: 'C1f1109f61de6683b2337dfa8d3a5ba4d',
+      lineUserId: 'Ucbf8c9e32fc2606a570a51bbc595d5e9',
       telegramBotToken: '',
       telegramChatId: ''
     };

@@ -22,6 +22,12 @@ export const HAPPY_LIFE_CLUBS: HappyLifeClub[] = [
 
 export const ADMIN_USERS = ['SPV_BME', 'MGR_BME', '563770'];
 
+export function isAuthorizedAdminUser(user: { username?: string } | null | undefined): boolean {
+  if (!user || !user.username) return false;
+  const username = user.username.trim().toUpperCase();
+  return ADMIN_USERS.includes(username);
+}
+
 export const INITIAL_EMPLOYEES: Employee[] = [
   {
     id: 'emp-1',

@@ -133,6 +133,21 @@ export const BMEStarVote: React.FC<BMEStarVoteProps> = ({ currentUser, onLogin, 
     return map;
   }, [employees]);
 
+  // Candidates available for currentUser to vote for (cannot vote for oneself or members in the same team/club)
+  const eligibleCandidates = useMemo(() => {
+    if (!currentUser) return employees;
+    return employees.filter(emp => {
+      const isSelf = emp.username.trim().toLowerCase() === currentUser.username.trim().toLowerCase() ||
+                     emp.fullName.trim() === currentUser.fullName.trim();
+      if (isSelf) return false;
+
+      if (emp.club && currentUser.club && emp.club.trim().toLowerCase() === currentUser.club.trim().toLowerCase()) {
+        return false;
+      }
+      return true;
+    });
+  }, [employees, currentUser]);
+
   const handleLoginSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!loginUser || !loginPass) {
@@ -485,13 +500,19 @@ export const BMEStarVote: React.FC<BMEStarVoteProps> = ({ currentUser, onLogin, 
                       className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm font-semibold outline-none focus:border-indigo-500"
                       required
                     >
-                      <option value="">-- เลือกเพื่อนพนักงาน --</option>
-                      {employees.map(emp => (
+                      <option value="">-- เลือกเพื่อนพนักงาน (ต่างทีม/ต่างชมรม) --</option>
+                      {eligibleCandidates.map(emp => (
                         <option key={emp.id} value={emp.fullName}>
                           {emp.fullName} ({emp.nickname}) - {emp.club}
                         </option>
                       ))}
                     </select>
+                    {currentUser && (
+                      <p className="text-[11px] text-amber-300/90 mt-1.5 flex items-center gap-1.5">
+                        <i className="fa-solid fa-ban text-amber-400"></i>
+                        <span>เงื่อนไขการโหวต: ไม่สามารถโหวตให้ตนเอง หรือสมาชิกในทีม/ชมรมเดียวกัน ({currentUser.club || 'ไม่มีชมรม'}) ได้</span>
+                      </p>
+                    )}
                   </div>
 
                   <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 text-[11px] text-amber-300 flex items-start gap-2">

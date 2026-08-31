@@ -75,6 +75,9 @@ export interface ActivityRecord {
 
 export interface CardAnnouncementSettings {
   lineWebhookUrl?: string;
+  lineChannelToken?: string;
+  lineGroupId?: string;
+  lineUserId?: string;
   telegramBotToken?: string;
   telegramChatId?: string;
 }

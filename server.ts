@@ -247,6 +247,146 @@ async function startServer() {
     }
   });
 
+  // API Proxy Route for LINE Messaging API / Webhook / Notify
+  app.post('/api/send-line', async (req, res) => {
+    try {
+      const { lineTokenOrWebhook, lineChannelToken, lineGroupId, lineUserId, lineWebhookUrl, message } = req.body;
+      if (!message) {
+        return res.status(400).json({ success: false, message: 'กรุณาระบุข้อความที่ต้องการส่ง' });
+      }
+
+      const channelToken = (lineChannelToken || (!lineTokenOrWebhook?.startsWith('http') ? lineTokenOrWebhook : '') || '').trim();
+      const webhookUrl = (lineWebhookUrl || (lineTokenOrWebhook?.startsWith('http') ? lineTokenOrWebhook : '') || '').trim();
+      const targetGroup = (lineGroupId || '').trim();
+      const targetUser = (lineUserId || '').trim();
+
+      let isSuccess = false;
+      const results: string[] = [];
+
+      // 1. Send via LINE Messaging API Push Message
+      if (channelToken && (targetGroup || targetUser)) {
+        const recipients = [targetGroup, targetUser].filter(Boolean);
+        for (const recipient of recipients) {
+          try {
+            const pushRes = await fetch('https://api.line.me/v2/bot/message/push', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${channelToken}`
+              },
+              body: JSON.stringify({
+                to: recipient,
+                messages: [{ type: 'text', text: message }]
+              })
+            });
+            if (pushRes.ok) {
+              isSuccess = true;
+              results.push(`ส่งผ่าน LINE Messaging API (ID: ${recipient}) สำเร็จ`);
+            } else {
+              const errJson: any = await pushRes.json().catch(() => ({}));
+              results.push(`Messaging API Push (${recipient}): ${errJson.message || pushRes.statusText}`);
+            }
+          } catch (e: any) {
+            results.push(`Messaging API error: ${e.message}`);
+          }
+        }
+      }
+
+      // 2. Send via Webhook URL (e.g. webhook.site, n8n, Make, Zapier)
+      if (webhookUrl && webhookUrl.startsWith('http')) {
+        try {
+          const whRes = await fetch(webhookUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              message,
+              text: message,
+              groupId: targetGroup,
+              userId: targetUser,
+              timestamp: new Date().toISOString()
+            })
+          });
+          if (whRes.ok) {
+            isSuccess = true;
+            results.push(`ส่งไปยัง Webhook (${webhookUrl.substring(0, 30)}...) สำเร็จ`);
+          } else {
+            results.push(`Webhook error HTTP ${whRes.status}`);
+          }
+        } catch (e: any) {
+          results.push(`Webhook error: ${e.message}`);
+        }
+      }
+
+      // 3. Fallback: Try LINE Notify API if token is short / standard notify token
+      if (!isSuccess && channelToken && channelToken.length < 60) {
+        try {
+          const formBody = new URLSearchParams();
+          formBody.append('message', message);
+          const notifyRes = await fetch('https://notify-api.line.me/api/notify', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'Authorization': `Bearer ${channelToken}`
+            },
+            body: formBody
+          });
+          const nJson: any = await notifyRes.json().catch(() => ({}));
+          if (nJson.status === 200) {
+            isSuccess = true;
+            results.push('ส่งผ่าน LINE Notify สำเร็จ');
+          }
+        } catch (e: any) {
+          results.push(`LINE Notify error: ${e.message}`);
+        }
+      }
+
+      if (isSuccess) {
+        return res.json({
+          success: true,
+          message: `ส่งการ์ดประกาศเรียบร้อยแล้ว! (${results.join(', ')})`
+        });
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: `ไม่สามารถส่งได้: ${results.length > 0 ? results.join(' | ') : 'โปรดตรวจสอบ Token และ Webhook URL'}`
+        });
+      }
+    } catch (err: any) {
+      console.error('LINE Send Error:', err);
+      return res.status(500).json({ success: false, message: `เกิดข้อผิดพลาดในการส่ง LINE: ${err.message}` });
+    }
+  });
+
+  // API Proxy Route for Telegram Bot
+  app.post('/api/send-telegram', async (req, res) => {
+    try {
+      const { botToken, chatId, message } = req.body;
+      if (!botToken || !chatId || !message) {
+        return res.status(400).json({ success: false, message: 'กรุณาระบุ Telegram Bot Token, Chat ID และข้อความ' });
+      }
+
+      const url = `https://api.telegram.org/bot${botToken.trim()}/sendMessage`;
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId.trim(),
+          text: message
+        })
+      });
+
+      const data: any = await response.json();
+      if (data.ok) {
+        return res.json({ success: true, message: 'ส่งข้อความเข้า Telegram Bot สำเร็จเรียบร้อย!' });
+      } else {
+        return res.status(400).json({ success: false, message: `Telegram Bot Error: ${data.description || 'ส่งข้อความไม่สำเร็จ'}` });
+      }
+    } catch (err: any) {
+      console.error('Telegram Send Error:', err);
+      return res.status(500).json({ success: false, message: `เกิดข้อผิดพลาดในการส่ง Telegram: ${err.message}` });
+    }
+  });
+
   // API Proxy Route for Google Apps Script Sync
   app.post('/api/sync-sheets', async (req, res) => {
     try {
