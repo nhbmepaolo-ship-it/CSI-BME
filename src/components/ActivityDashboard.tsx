@@ -222,42 +222,15 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
     try {
       localStorage.setItem('csi_google_sheets_url', gasUrl.trim());
 
-      const payload = {
-        action: 'sync_activities',
-        timestamp: new Date().toISOString(),
-        totalRecords: filteredActivities.length,
-        activities: filteredActivities.map(a => ({
-          date: new Date(a.timestamp).toLocaleDateString('th-TH'),
-          username: a.username,
-          fullName: a.fullName,
-          nickname: a.nickname,
-          club: a.club,
-          category: a.activityCategory,
-          activityName: a.activityName,
-          hours: a.hours,
-          minutes: a.minutes,
-          totalMinutes: a.totalMinutes,
-          description: a.description || ''
-        }))
-      };
-
-      await fetch(gasUrl.trim(), {
-        method: 'POST',
-        mode: 'no-cors',
-        headers: {
-          'Content-Type': 'text/plain;charset=utf-8'
-        },
-        body: JSON.stringify(payload)
-      });
-
+      const res = await StorageService.syncToGoogleSheets(filteredActivities, gasUrl.trim());
       setSyncMessage({
-        type: 'success',
-        text: `ส่งคำขอซิงค์ข้อมูลกิจกรรมทั้ง ${filteredActivities.length} รายการไปยัง Google Sheet เรียบร้อยแล้ว! (โปรดตรวจสอบข้อมูลที่ Google Sheet)`
+        type: res.success ? 'success' : 'error',
+        text: res.message
       });
     } catch (err: any) {
       setSyncMessage({
         type: 'error',
-        text: `เกิดข้อผิดพลาดในการเชื่อมต่อ Google Sheets: ${err.message || 'โปรดตรวจสอบ URL'}`
+        text: `เกิดข้อผิดพลาดในการซิงค์ข้อมูล: ${err.message || 'โปรดตรวจสอบ URL'}`
       });
     } finally {
       setIsSyncing(false);
@@ -765,22 +738,46 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-slate-300">
-                  สคริปต์ Google Apps Script สำหรับคัดลอกไปวางใน Google Sheet:
+                  สคริปต์ Google Apps Script (รองรับทั้งไฟล์ใน Google Sheet และ Standalone):
                 </span>
                 <button
                   onClick={() => {
-                    const code = `function doPost(e) {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
-  var data = JSON.parse(e.postData.contents);
-  if (data.activities && data.activities.length > 0) {
-    if (sheet.getLastRow() === 0) {
-      sheet.appendRow(["วันที่ทำกิจกรรม", "รหัสพนักงาน", "ชื่อผู้บันทึก", "ชื่อเล่น", "ชมรม", "หมวดหมู่", "ชื่อกิจกรรม", "ชั่วโมง", "นาที", "นาทีรวม", "รายละเอียด"]);
+                    const code = `function doPost(e) { return handleRequest(e); }
+function doGet(e) { return handleRequest(e); }
+
+function handleRequest(e) {
+  try {
+    var ss;
+    try { ss = SpreadsheetApp.getActiveSpreadsheet(); } catch(err) {}
+    
+    // หากสร้างสคริปต์ที่ script.google.com (ไม่ได้เปิดจากหน้า Google Sheet) ให้ใส่ ID ของ Sheet
+    if (!ss) {
+      var SPREADSHEET_ID = "ใส่_ID_ของ_GOOGLE_SHEET_ตรงนี้"; // เช่น 1BxiMVs0XR...
+      ss = SpreadsheetApp.openById(SPREADSHEET_ID);
     }
-    data.activities.forEach(function(act) {
-      sheet.appendRow([act.date, act.username, act.fullName, act.nickname, act.club, act.category, act.activityName, act.hours, act.minutes, act.totalMinutes, act.description]);
-    });
+
+    var sheet = ss.getActiveSheet();
+    var contents = e && e.postData ? e.postData.contents : null;
+    var data = null;
+    if (contents) {
+      data = JSON.parse(contents);
+    } else if (e && e.parameter && e.parameter.data) {
+      data = JSON.parse(e.parameter.data);
+    }
+
+    if (data && data.activities && data.activities.length > 0) {
+      if (sheet.getLastRow() === 0) {
+        sheet.appendRow(["วันที่ทำกิจกรรม", "รหัสพนักงาน", "ชื่อผู้บันทึก", "ชื่อเล่น", "ชมรม", "หมวดหมู่", "ชื่อกิจกรรม", "ชั่วโมง", "นาที", "นาทีรวม", "รายละเอียด"]);
+      }
+      data.activities.forEach(function(act) {
+        sheet.appendRow([act.date, act.username, act.fullName, act.nickname, act.club, act.category, act.activityName, act.hours, act.minutes, act.totalMinutes, act.description]);
+      });
+      return ContentService.createTextOutput("SUCCESS").setMimeType(ContentService.MimeType.TEXT);
+    }
+    return ContentService.createTextOutput("NO_DATA").setMimeType(ContentService.MimeType.TEXT);
+  } catch(err) {
+    return ContentService.createTextOutput("ERROR: " + err.toString()).setMimeType(ContentService.MimeType.TEXT);
   }
-  return ContentService.createTextOutput("SUCCESS").setMimeType(ContentService.MimeType.TEXT);
 }`;
                     navigator.clipboard.writeText(code);
                     alert('คัดลอกสคริปต์ Apps Script สำเร็จ!');
@@ -790,19 +787,43 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
                   คัดลอกสคริปต์
                 </button>
               </div>
-              <pre className="p-3 bg-slate-950 border border-white/10 rounded-xl text-[11px] font-mono text-emerald-300/90 overflow-x-auto max-h-36">
-{`function doPost(e) {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
-  var data = JSON.parse(e.postData.contents);
-  if (data.activities && data.activities.length > 0) {
-    if (sheet.getLastRow() === 0) {
-      sheet.appendRow(["วันที่ทำกิจกรรม", "รหัสพนักงาน", "ชื่อผู้บันทึก", "ชื่อเล่น", "ชมรม", "หมวดหมู่", "ชื่อกิจกรรม", "ชั่วโมง", "นาที", "นาทีรวม", "รายละเอียด"]);
+              <pre className="p-3 bg-slate-950 border border-white/10 rounded-xl text-[11px] font-mono text-emerald-300/90 overflow-x-auto max-h-44">
+{`function doPost(e) { return handleRequest(e); }
+function doGet(e) { return handleRequest(e); }
+
+function handleRequest(e) {
+  try {
+    var ss;
+    try { ss = SpreadsheetApp.getActiveSpreadsheet(); } catch(err) {}
+    
+    // หากสร้างสคริปต์แยกจาก script.google.com ให้ระบุ ID ของ Google Sheet
+    if (!ss) {
+      var SPREADSHEET_ID = "ใส่_ID_ของ_GOOGLE_SHEET_ตรงนี้";
+      ss = SpreadsheetApp.openById(SPREADSHEET_ID);
     }
-    data.activities.forEach(function(act) {
-      sheet.appendRow([act.date, act.username, act.fullName, act.nickname, act.club, act.category, act.activityName, act.hours, act.minutes, act.totalMinutes, act.description]);
-    });
+
+    var sheet = ss.getActiveSheet();
+    var contents = e && e.postData ? e.postData.contents : null;
+    var data = null;
+    if (contents) {
+      data = JSON.parse(contents);
+    } else if (e && e.parameter && e.parameter.data) {
+      data = JSON.parse(e.parameter.data);
+    }
+
+    if (data && data.activities && data.activities.length > 0) {
+      if (sheet.getLastRow() === 0) {
+        sheet.appendRow(["วันที่ทำกิจกรรม", "รหัสพนักงาน", "ชื่อผู้บันทึก", "ชื่อเล่น", "ชมรม", "หมวดหมู่", "ชื่อกิจกรรม", "ชั่วโมง", "นาที", "นาทีรวม", "รายละเอียด"]);
+      }
+      data.activities.forEach(function(act) {
+        sheet.appendRow([act.date, act.username, act.fullName, act.nickname, act.club, act.category, act.activityName, act.hours, act.minutes, act.totalMinutes, act.description]);
+      });
+      return ContentService.createTextOutput("SUCCESS").setMimeType(ContentService.MimeType.TEXT);
+    }
+    return ContentService.createTextOutput("NO_DATA").setMimeType(ContentService.MimeType.TEXT);
+  } catch(err) {
+    return ContentService.createTextOutput("ERROR: " + err.toString()).setMimeType(ContentService.MimeType.TEXT);
   }
-  return ContentService.createTextOutput("SUCCESS").setMimeType(ContentService.MimeType.TEXT);
 }`}
               </pre>
             </div>

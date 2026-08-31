@@ -47,6 +47,26 @@ export default function App() {
     msg: ''
   });
 
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncVersion, setSyncVersion] = useState(0);
+
+  const triggerGlobalSync = async (silent = true) => {
+    setIsSyncing(true);
+    try {
+      const res = await StorageService.fetchAndSyncFromGoogleSheet();
+      if (res.success) {
+        setSyncVersion(prev => prev + 1);
+        if (!silent) showToast('success', 'ซิงค์ข้อมูลล่าสุดจาก Google Sheet ทั้งหมดเรียบร้อยแล้ว');
+      } else if (!silent) {
+        showToast('error', res.message || 'ซิงค์ข้อมูลไม่สำเร็จ');
+      }
+    } catch {
+      if (!silent) showToast('error', 'เกิดข้อผิดพลาดในการเชื่อมต่อ Google Sheet');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   useEffect(() => {
     // Load persisted user or default employee
     const stored = StorageService.getCurrentUser();
@@ -58,6 +78,9 @@ export default function App() {
       setCurrentUser(defaultUser);
       if (defaultUser) StorageService.setCurrentUser(defaultUser);
     }
+
+    // Auto sync all Google Sheet data on initial load
+    triggerGlobalSync(true);
   }, []);
 
   const handleLogin = (user: Employee) => {
@@ -281,8 +304,22 @@ export default function App() {
             </p>
           </div>
 
-          {/* Quick Page Nav Icons */}
+          {/* Quick Page Nav & Sync Button */}
           <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => triggerGlobalSync(false)}
+              disabled={isSyncing}
+              title="ซิงค์ข้อมูลจาก Google Sheet ทั้งหมด"
+              className={`px-2.5 py-1.5 rounded-xl text-xs font-bold border transition-all flex items-center gap-1.5 ${
+                isSyncing
+                  ? 'bg-amber-500/30 text-amber-200 border-amber-400/50 animate-pulse'
+                  : 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border-emerald-400/40'
+              }`}
+            >
+              <i className={`fa-solid fa-rotate ${isSyncing ? 'animate-spin text-amber-300' : 'text-emerald-400'}`}></i>
+              <span className="hidden sm:inline">{isSyncing ? 'กำลังซิงค์...' : 'ซิงค์ Sheet'}</span>
+            </button>
+
             <button
               onClick={() => setActivePage('csi-form')}
               title="แบบฟอร์มประเมิน CSI"
@@ -316,15 +353,16 @@ export default function App() {
         {/* Page Container */}
         <div className="flex-1 overflow-y-auto">
           {activePage === 'csi-form' && (
-            <CSIForm onSuccessSubmitted={() => setActivePage('csi-dash')} showModal={showModal} />
+            <CSIForm key={syncVersion} onSuccessSubmitted={() => setActivePage('csi-dash')} showModal={showModal} />
           )}
 
           {activePage === 'csi-dash' && (
-            <CSIDashboard />
+            <CSIDashboard key={syncVersion} />
           )}
 
           {activePage === 'vote' && (
             <BMEStarVote
+              key={syncVersion}
               currentUser={currentUser}
               onLogin={user => setCurrentUser(user)}
               onLogout={() => setCurrentUser(null)}
@@ -334,6 +372,7 @@ export default function App() {
 
           {activePage === 'act-log' && (
             <ActivityLogForm
+              key={syncVersion}
               currentUser={currentUser}
               onLogin={handleLogin}
               onLogout={handleLogout}
@@ -343,15 +382,15 @@ export default function App() {
           )}
 
           {activePage === 'act-dash' && (
-            <ActivityDashboard currentUser={currentUser} />
+            <ActivityDashboard key={syncVersion} currentUser={currentUser} />
           )}
 
           {activePage === 'staff-mgr' && (
-            <StaffManagement currentUser={currentUser} showToast={showToast} />
+            <StaffManagement key={syncVersion} currentUser={currentUser} showToast={showToast} />
           )}
 
           {activePage === 'card-notify' && (
-            <NotificationCard showToast={showToast} />
+            <NotificationCard key={syncVersion} showToast={showToast} />
           )}
         </div>
       </main>

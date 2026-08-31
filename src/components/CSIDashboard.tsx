@@ -57,13 +57,30 @@ export const CSIDashboard: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'overview' | 'scores' | 'staff' | 'insights' | 'suggestions'>('overview');
   const [sugCategory, setSugCategory] = useState<string>('all');
 
+  // Google Sheet Auto Sync State
+  const [sheetId, setSheetId] = useState<string>(StorageService.getGoogleSheetId());
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [syncMessage, setSyncMessage] = useState<string>('');
+  const [showSheetModal, setShowSheetModal] = useState<boolean>(false);
+
   const loadData = () => {
     const data = StorageService.getCSIRecords();
     setRawData(data);
   };
 
+  const handleSyncFromSheet = async (targetId?: string) => {
+    setIsSyncing(true);
+    setSyncMessage('กำลังเชื่อมต่อและดึงข้อมูลจาก Google Sheet...');
+    const result = await StorageService.fetchAndSyncFromGoogleSheet(targetId || sheetId);
+    setIsSyncing(false);
+    setSyncMessage(result.message);
+    loadData();
+  };
+
   useEffect(() => {
     loadData();
+    // Auto sync from Google Sheet on mount
+    handleSyncFromSheet();
   }, []);
 
   const years = useMemo(() => {
@@ -204,6 +221,62 @@ export const CSIDashboard: React.FC = () => {
 
   return (
     <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-6">
+      {/* Google Sheet Live Auto Connection Header */}
+      <div className="bg-gradient-to-r from-emerald-950/80 via-slate-900 to-indigo-950/80 border border-emerald-500/30 rounded-3xl p-4 sm:p-5 shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="flex items-center gap-3.5">
+          <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 flex items-center justify-center text-xl shadow-inner flex-shrink-0">
+            <i className="fa-solid fa-file-excel"></i>
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+              <h2 className="font-th font-extrabold text-base sm:text-lg text-white">
+                เชื่อมต่อ Google Sheet ดึงข้อมูลออโต้แล้ว
+              </h2>
+            </div>
+            <p className="text-xs text-emerald-300 font-mono mt-0.5 truncate max-w-md">
+              Sheet ID: <strong className="text-emerald-200">{sheetId}</strong>
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+          <button
+            onClick={() => handleSyncFromSheet()}
+            disabled={isSyncing}
+            className="px-4 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-800 text-white text-xs font-bold shadow-lg shadow-emerald-600/30 flex items-center gap-2 transition-all active:scale-95 cursor-pointer"
+          >
+            <i className={`fa-solid ${isSyncing ? 'fa-spin fa-spinner' : 'fa-arrows-rotate'}`}></i>
+            <span>{isSyncing ? 'กำลังดึงข้อมูล...' : '⚡ ดึงข้อมูลล่าสุดจาก Sheet'}</span>
+          </button>
+
+          <button
+            onClick={() => setShowSheetModal(true)}
+            className="px-3.5 py-2.5 rounded-2xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-xs font-bold flex items-center gap-1.5 transition-all"
+            title="เปลี่ยน Sheet ID"
+          >
+            <i className="fa-solid fa-gear"></i>
+            <span>ตั้งค่า Sheet ID</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Sync feedback notification */}
+      {syncMessage && (
+        <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-2xl p-3 px-4 text-xs text-emerald-300 flex items-center justify-between gap-3 shadow-md animate-fade-in">
+          <div className="flex items-center gap-2">
+            <i className="fa-solid fa-circle-check text-emerald-400 text-sm"></i>
+            <span>{syncMessage}</span>
+          </div>
+          <button
+            onClick={() => setSyncMessage('')}
+            className="text-emerald-400 hover:text-emerald-200 text-xs font-bold"
+          >
+            <i className="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+      )}
+
       {/* Filter Bar */}
       <div className="bg-slate-800/90 border border-slate-700/80 rounded-2xl p-4 flex flex-wrap gap-3 items-center shadow-lg">
         <div className="flex items-center gap-2 text-indigo-400 font-bold text-xs">
@@ -640,6 +713,74 @@ export const CSIDashboard: React.FC = () => {
             {filteredSuggestions.length === 0 && (
               <div className="py-12 text-center text-slate-500 text-xs">ไม่พบข้อเสนอแนะในหมวดนี้</div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Sheet ID Configuration Modal */}
+      {showSheetModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md">
+          <div className="w-full max-w-md bg-slate-900 border border-emerald-500/40 rounded-3xl p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-white/10">
+              <h3 className="font-th font-extrabold text-base text-emerald-300 flex items-center gap-2">
+                <i className="fa-solid fa-file-excel"></i>
+                <span>ตั้งค่า Google Sheet ID ดึงข้อมูล</span>
+              </h3>
+              <button
+                onClick={() => setShowSheetModal(false)}
+                className="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center text-xs"
+              >
+                <i className="fa-solid fa-xmark"></i>
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">
+                  Google Sheet ID
+                </label>
+                <input
+                  type="text"
+                  value={sheetId}
+                  onChange={e => setSheetId(e.target.value)}
+                  placeholder="เช่น 11qoHRaakTjvDWvOekqTTlP2SFcqdfys6cT653wRfjUA"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white font-mono text-xs outline-none focus:border-emerald-500"
+                />
+                <p className="text-[11px] text-slate-400 mt-1">
+                  * ตัวอย่าง Google Sheet URL: <code className="text-emerald-300">https://docs.google.com/spreadsheets/d/<b>[Sheet-ID]</b>/edit</code>
+                </p>
+              </div>
+
+              <div className="p-3 bg-slate-950/80 rounded-2xl border border-slate-800 text-[11px] text-slate-300 space-y-1">
+                <div className="font-bold text-emerald-400 flex items-center gap-1.5">
+                  <i className="fa-solid fa-circle-check"></i>
+                  <span>ข้อแนะนำการตั้งค่าสิทธิ์แชร์ Google Sheet:</span>
+                </div>
+                <p>1. เปิดไฟล์ Google Sheet ของคุณ</p>
+                <p>2. กดปุ่ม <strong>แชร์ (Share)</strong> มุมขวาบน</p>
+                <p>3. ปรับเปลี่ยนเป็น <strong>"ทุกคนที่มีลิงก์ (Anyone with link)"</strong> ให้มีสิทธิ์ <strong>ดู (Viewer)</strong></p>
+              </div>
+            </div>
+
+            <div className="flex gap-2 pt-2 border-t border-white/10">
+              <button
+                type="button"
+                onClick={() => setShowSheetModal(false)}
+                className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowSheetModal(false);
+                  handleSyncFromSheet(sheetId);
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-lg shadow-emerald-600/30"
+              >
+                บันทึก & ดึงข้อมูลทันที
+              </button>
+            </div>
           </div>
         </div>
       )}
