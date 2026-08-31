@@ -32,15 +32,44 @@ export class StorageService {
     const cleanedList: Employee[] = [];
     const seenUsernames = new Set<string>();
 
-    const CANONICAL_ADMINS: { [key: string]: { fullName: string; nickname: string; club: HappyLifeClub } } = {
-      '563770': { fullName: 'สมชาย ใจดี', nickname: 'โจ', club: 'ชมรมฟุตบอล' },
-      'MGR_BME': { fullName: 'สุรชัย ผู้จัดการ', nickname: 'ป๋อง', club: 'ชมรมแบตมินตัน' },
-      'SPV_BME': { fullName: 'ประวิทย์ ซูเปอร์ไวเซอร์', nickname: 'วิทย์', club: 'ชมรมเดิน-วิ่ง' }
+    const CANONICAL_ADMINS: { [key: string]: { fullName: string; nickname: string; club: HappyLifeClub; password?: string; img: string } } = {
+      '563770': {
+        fullName: 'Supattra Kaewsuwan',
+        nickname: 'เปี้ยว',
+        club: 'ชมรมเดิน-วิ่ง',
+        img: 'https://api.dicebear.com/7.x/avataaars/svg?seed=SupattraKaewsuwan&skinColor=f8d25c&hair=longButNotTooLong&hairColor=2c1b18'
+      },
+      'MGR_BME': {
+        fullName: 'Chalee Meksuwan',
+        nickname: 'ปิ้ง',
+        club: 'ชมรมเดิน-วิ่ง',
+        password: 'Mgr-BME',
+        img: 'https://api.dicebear.com/7.x/avataaars/svg?seed=ChaleeMeksuwan&skinColor=f8d25c&hair=shortWaved&hairColor=2c1b18'
+      },
+      'SPV_BME': {
+        fullName: 'Raschanee Majanit',
+        nickname: 'มิน',
+        club: 'ชมรมเดิน-วิ่ง',
+        img: 'https://api.dicebear.com/7.x/avataaars/svg?seed=RaschaneeMajanit&skinColor=f8d25c&hair=shortSides&hairColor=2c1b18'
+      }
     };
 
     for (const emp of list) {
       const cleanNick = cleanStr(emp.nickname);
       const cleanFull = cleanStr(emp.fullName);
+
+      // Filter out team placeholder accounts
+      const isTeam = cleanFull.toLowerCase().includes('team') ||
+        cleanNick.toLowerCase().includes('team') ||
+        cleanFull.includes('ทีม') ||
+        cleanNick.includes('ทีม') ||
+        (emp.username && emp.username.toLowerCase().includes('team')) ||
+        emp.username === 'emp_15';
+
+      if (isTeam) {
+        hasChanges = true;
+        continue;
+      }
 
       // Filter out old dummy mock accounts
       if (emp.username && (emp.username.startsWith('emp_a') || emp.username.startsWith('emp_nan') || emp.username.startsWith('emp_jiw') || emp.username.startsWith('emp_name') || emp.username.startsWith('emp_da'))) {
@@ -59,15 +88,32 @@ export class StorageService {
       let updatedClub: HappyLifeClub = (emp.club as HappyLifeClub) || 'ชมรมเดิน-วิ่ง';
       let isAdmin = emp.isAdmin || false;
 
-      if (CANONICAL_ADMINS[uUpper]) {
-        const canonical = CANONICAL_ADMINS[uUpper];
-        if (emp.fullName !== canonical.fullName || emp.nickname !== canonical.nickname || !emp.isAdmin) {
+      let updatedPass = emp.password;
+
+      let img = emp.img;
+      if (img && img.includes('drive.google.com')) {
+        const m = img.match(/\/d\/([a-zA-Z0-9_-]+)/) || img.match(/id=([a-zA-Z0-9_-]+)/);
+        if (m && m[1]) {
+          img = `https://lh3.googleusercontent.com/d/${m[1]}`;
           hasChanges = true;
         }
-        updatedFull = canonical.fullName;
-        updatedNick = canonical.nickname;
+      }
+
+      if (CANONICAL_ADMINS[uUpper]) {
+        const canonical = CANONICAL_ADMINS[uUpper];
+        if (emp.fullName !== canonical.fullName || emp.nickname !== canonical.nickname || !emp.isAdmin || (canonical.password && emp.password !== canonical.password)) {
+          hasChanges = true;
+        }
+        if (!emp.fullName) updatedFull = canonical.fullName;
+        if (!emp.nickname) updatedNick = canonical.nickname;
+        if (canonical.password && !emp.password) updatedPass = canonical.password;
         if (!emp.club) updatedClub = canonical.club;
         isAdmin = true;
+      }
+
+      if (!img || img.includes('images.unsplash') || !img.startsWith('http')) {
+        img = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(updatedNick || updatedFull)}&skinColor=f8d25c`;
+        hasChanges = true;
       }
 
       const key = (emp.username || updatedFull).toLowerCase();
@@ -77,12 +123,6 @@ export class StorageService {
       }
       seenUsernames.add(key);
 
-      let img = emp.img;
-      if (img && img.includes('images.unsplash.com')) {
-        img = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(updatedNick || updatedFull)}&skinColor=f8d25c`;
-        hasChanges = true;
-      }
-
       if (updatedNick !== emp.nickname || updatedFull !== emp.fullName) {
         hasChanges = true;
       }
@@ -91,6 +131,7 @@ export class StorageService {
         ...emp,
         nickname: updatedNick,
         fullName: updatedFull,
+        password: updatedPass,
         club: updatedClub,
         isAdmin,
         img
@@ -507,18 +548,53 @@ export class StorageService {
 
       if (fetchedEmp.length > 0) {
         const cleanStr = (s: string) => (s || '').replace(/\s*\(?https?:\/\/[^\s)]+\)?/gi, '').trim();
-        const cleanFetched: Employee[] = fetchedEmp.map(e => ({
-          ...e,
-          fullName: cleanStr(e.fullName),
-          nickname: cleanStr(e.nickname)
-        }));
+        const cleanFetched: Employee[] = fetchedEmp
+          .filter(e => {
+            const f = (e.fullName || '').toLowerCase();
+            const n = (e.nickname || '').toLowerCase();
+            const u = (e.username || '').toLowerCase();
+            return !f.includes('team') && !n.includes('team') && !f.includes('ทีม') && !n.includes('ทีม') && !u.includes('team') && u !== 'emp_15';
+          })
+          .map(e => {
+            let img = e.img;
+            if (img && img.includes('drive.google.com')) {
+              const m = img.match(/\/d\/([a-zA-Z0-9_-]+)/) || img.match(/id=([a-zA-Z0-9_-]+)/);
+              if (m && m[1]) {
+                img = `https://lh3.googleusercontent.com/d/${m[1]}`;
+              }
+            }
+            if (!img || !img.startsWith('http')) {
+              img = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(cleanStr(e.nickname) || cleanStr(e.fullName) || e.username)}&skinColor=f8d25c`;
+            }
+            return {
+              ...e,
+              fullName: cleanStr(e.fullName),
+              nickname: cleanStr(e.nickname),
+              img
+            };
+          });
 
         const existingEmp = this.getEmployees();
-        const adminAccounts = existingEmp.filter(e => ['563770', 'MGR_BME', 'SPV_BME'].includes(e.username.toUpperCase()));
-
         const empMap = new Map<string, Employee>();
-        adminAccounts.forEach(a => empMap.set(a.username.toLowerCase(), a));
+
+        // Put fetched employees into map
         cleanFetched.forEach(f => empMap.set(f.username.toLowerCase(), f));
+
+        // Ensure admin flags and default credentials if missing
+        ['563770', 'MGR_BME', 'SPV_BME'].forEach(code => {
+          const uKey = code.toLowerCase();
+          const existingAdmin = existingEmp.find(e => e.username.toUpperCase() === code);
+          const fetchedAdmin = empMap.get(uKey);
+
+          if (fetchedAdmin) {
+            empMap.set(uKey, {
+              ...fetchedAdmin,
+              isAdmin: true
+            });
+          } else if (existingAdmin) {
+            empMap.set(uKey, existingAdmin);
+          }
+        });
 
         const updatedList = Array.from(empMap.values());
         this.saveEmployees(updatedList);
@@ -662,67 +738,77 @@ export class StorageService {
         }
       }
 
-      // 2. Fetch Employees
-      const staffUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent('ข้อมูลพนักงาน')}`;
-      const staffRes = await fetch(staffUrl);
+      // 2. Fetch Employees (Try multiple common tab names)
+      const possibleStaffTabs = ['ข้อมูลพนักงาน', 'พนักงาน', 'รายชื่อพนักงาน', 'Employees', 'Staff', 'Sheet2'];
       const employees: Employee[] = [];
 
-      if (staffRes.ok) {
-        const staffCsv = await staffRes.text();
-        const staffRows = parseCSV(staffCsv);
-        if (staffRows.length > 1) {
-          let fullNameIdx = 0;
-          let nicknameIdx = 1;
-          let imgIdx = 2;
-          let usernameIdx = 3;
-          let passIdx = 4;
+      for (const tabName of possibleStaffTabs) {
+        try {
+          const staffUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(tabName)}`;
+          const staffRes = await fetch(staffUrl);
+          if (staffRes.ok) {
+            const staffCsv = await staffRes.text();
+            if (staffCsv && !staffCsv.includes('google-signin') && !staffCsv.includes('<!DOCTYPE html>')) {
+              const staffRows = parseCSV(staffCsv);
+              if (staffRows.length > 1) {
+                let fullNameIdx = 0;
+                let nicknameIdx = 1;
+                let imgIdx = 2;
+                let usernameIdx = 3;
+                let passIdx = 4;
 
-          const header = staffRows[0].map(h => (h || '').trim().toLowerCase());
-          header.forEach((col, idx) => {
-            if (col.includes('ชื่อ') && !col.includes('เล่น')) fullNameIdx = idx;
-            if (col.includes('เล่น')) nicknameIdx = idx;
-            if (col.includes('รูป') || col.includes('img') || col.includes('pic') || col.includes('photo')) imgIdx = idx;
-            if (col.includes('user')) usernameIdx = idx;
-            if (col.includes('pass')) passIdx = idx;
-          });
-
-          for (let j = 1; j < staffRows.length; j++) {
-            const sRow = staffRows[j];
-            if (sRow && sRow.length >= 2) {
-              const cleanStr = (val: string) => (val || '').replace(/\s*\(?https?:\/\/[^\s)]+\)?/gi, '').trim();
-
-              const fullName = cleanStr(sRow[fullNameIdx] || '');
-              const nickname = cleanStr(sRow[nicknameIdx] || fullName || '');
-              let img = (sRow[imgIdx] || '').trim();
-              const username = (sRow[usernameIdx] || `emp_${j}`).trim();
-              const password = (sRow[passIdx] || '123').trim();
-
-              if (img && !img.startsWith('http')) {
-                img = `https://${img}`;
-              }
-
-              if (!img) {
-                img = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(nickname || fullName || 'user')}&skinColor=f8d25c`;
-              }
-
-              const uUpper = username.toUpperCase();
-              const isAdmin = uUpper.includes('ADMIN') || uUpper.includes('SPV') || uUpper.includes('MGR') || uUpper === '563770';
-
-              if (fullName || nickname || username) {
-                employees.push({
-                  id: `sheet-emp-${username}`,
-                  username,
-                  password,
-                  fullName,
-                  nickname,
-                  club: 'ชมรมเดิน-วิ่ง',
-                  img,
-                  status: 'active',
-                  isAdmin
+                const header = staffRows[0].map(h => (h || '').trim().toLowerCase());
+                header.forEach((col, idx) => {
+                  if ((col.includes('ชื่อ') && !col.includes('เล่น')) || col.includes('full') || col.includes('name')) fullNameIdx = idx;
+                  if (col.includes('เล่น') || col.includes('nick')) nicknameIdx = idx;
+                  if (col.includes('รูป') || col.includes('img') || col.includes('pic') || col.includes('photo') || col.includes('avatar')) imgIdx = idx;
+                  if (col.includes('user') || col.includes('รหัสพนักงาน') || col.includes('รหัส') || col.includes('id')) usernameIdx = idx;
+                  if (col.includes('pass') || col.includes('รหัสผ่าน')) passIdx = idx;
                 });
+
+                for (let j = 1; j < staffRows.length; j++) {
+                  const sRow = staffRows[j];
+                  if (sRow && sRow.length >= 2) {
+                    const cleanStr = (val: string) => (val || '').replace(/\s*\(?https?:\/\/[^\s)]+\)?/gi, '').trim();
+
+                    const fullName = cleanStr(sRow[fullNameIdx] || '');
+                    const nickname = cleanStr(sRow[nicknameIdx] || fullName || '');
+                    let img = (sRow[imgIdx] || '').trim();
+                    const username = (sRow[usernameIdx] || `emp_${j}`).trim();
+                    const password = (sRow[passIdx] || '123').trim();
+
+                    if (img && !img.startsWith('http')) {
+                      img = `https://${img}`;
+                    }
+
+                    if (!img) {
+                      img = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(nickname || fullName || 'user')}&skinColor=f8d25c`;
+                    }
+
+                    const uUpper = username.toUpperCase();
+                    const isAdmin = uUpper.includes('ADMIN') || uUpper.includes('SPV') || uUpper.includes('MGR') || uUpper === '563770';
+
+                    if (fullName || nickname || username) {
+                      employees.push({
+                        id: `sheet-emp-${username}`,
+                        username,
+                        password,
+                        fullName,
+                        nickname,
+                        club: 'ชมรมเดิน-วิ่ง',
+                        img,
+                        status: 'active',
+                        isAdmin
+                      });
+                    }
+                  }
+                }
+                if (employees.length > 0) break; // Successfully parsed staff from this tab
               }
             }
           }
+        } catch (e) {
+          console.warn(`Attempt to fetch sheet tab '${tabName}' skipped:`, e);
         }
       }
 

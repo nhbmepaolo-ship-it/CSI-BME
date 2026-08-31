@@ -164,68 +164,92 @@ async function startServer() {
         });
       }
 
-      // Try fetching staff list from 'ข้อมูลพนักงาน' tab as well
-      const staffTabUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent('ข้อมูลพนักงาน')}`;
-      const staffRes = await fetch(staffTabUrl, { redirect: 'follow' });
+      // Try fetching staff list from multiple possible tab names
+      const possibleStaffTabs = ['ข้อมูลพนักงาน', 'พนักงาน', 'รายชื่อพนักงาน', 'Employees', 'Staff', 'Sheet2'];
       const employees = [];
 
-      if (staffRes.ok) {
-        const staffCsv = await staffRes.text();
-        const staffRows = parseCSV(staffCsv);
-        if (staffRows.length > 1) {
-          let fullNameIdx = 0;
-          let nicknameIdx = 1;
-          let imgIdx = 2;
-          let usernameIdx = 3;
-          let passIdx = 4;
+      for (const tabName of possibleStaffTabs) {
+        try {
+          const staffTabUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(tabName)}`;
+          const staffRes = await fetch(staffTabUrl, { redirect: 'follow' });
+          if (staffRes.ok) {
+            const staffCsv = await staffRes.text();
+            if (staffCsv && !staffCsv.includes('google-signin') && !staffCsv.includes('<!DOCTYPE html>')) {
+              const staffRows = parseCSV(staffCsv);
+              if (staffRows.length > 1) {
+                let fullNameIdx = 0;
+                let nicknameIdx = 1;
+                let imgIdx = 2;
+                let usernameIdx = 3;
+                let passIdx = 4;
 
-          const header = staffRows[0].map(h => (h || '').trim().toLowerCase());
-          header.forEach((col, idx) => {
-            if (col.includes('ชื่อ') && !col.includes('เล่น')) fullNameIdx = idx;
-            if (col.includes('เล่น')) nicknameIdx = idx;
-            if (col.includes('รูป') || col.includes('img') || col.includes('pic') || col.includes('photo')) imgIdx = idx;
-            if (col.includes('user')) usernameIdx = idx;
-            if (col.includes('pass')) passIdx = idx;
-          });
-
-          for (let j = 1; j < staffRows.length; j++) {
-            const sRow = staffRows[j];
-            if (sRow && sRow.length >= 2) {
-              const cleanStr = (val: string) => (val || '').replace(/\s*\(?https?:\/\/[^\s)]+\)?/gi, '').trim();
-
-              const fullName = cleanStr(sRow[fullNameIdx] || '');
-              const nickname = cleanStr(sRow[nicknameIdx] || fullName || '');
-              let img = (sRow[imgIdx] || '').trim();
-              const username = (sRow[usernameIdx] || `emp_${j}`).trim();
-              const password = (sRow[passIdx] || '123').trim();
-
-              // Clean up image URL if it starts with http
-              if (img && !img.startsWith('http')) {
-                img = `https://${img}`;
-              }
-
-              if (!img) {
-                img = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(nickname || fullName || 'user')}&skinColor=f8d25c`;
-              }
-
-              const uUpper = username.toUpperCase();
-              const isAdmin = uUpper.includes('ADMIN') || uUpper.includes('SPV') || uUpper.includes('MGR') || uUpper === '563770';
-
-              if (fullName || nickname || username) {
-                employees.push({
-                  id: `sheet-emp-${username}`,
-                  username,
-                  password,
-                  fullName,
-                  nickname,
-                  club: 'ชมรมเดิน-วิ่ง',
-                  img,
-                  status: 'active',
-                  isAdmin
+                const header = staffRows[0].map(h => (h || '').trim().toLowerCase());
+                header.forEach((col, idx) => {
+                  if ((col.includes('ชื่อ') && !col.includes('เล่น')) || col.includes('full') || col.includes('name')) fullNameIdx = idx;
+                  if (col.includes('เล่น') || col.includes('nick')) nicknameIdx = idx;
+                  if (col.includes('รูป') || col.includes('img') || col.includes('pic') || col.includes('photo') || col.includes('avatar')) imgIdx = idx;
+                  if (col.includes('user') || col.includes('รหัสพนักงาน') || col.includes('รหัส') || col.includes('id')) usernameIdx = idx;
+                  if (col.includes('pass') || col.includes('รหัสผ่าน')) passIdx = idx;
                 });
+
+                for (let j = 1; j < staffRows.length; j++) {
+                  const sRow = staffRows[j];
+                  if (sRow && sRow.length >= 2) {
+                    const cleanStr = (val: string) => (val || '').replace(/\s*\(?https?:\/\/[^\s)]+\)?/gi, '').trim();
+
+                    const fullName = cleanStr(sRow[fullNameIdx] || '');
+                    const nickname = cleanStr(sRow[nicknameIdx] || fullName || '');
+                    let img = (sRow[imgIdx] || '').trim();
+                    const username = (sRow[usernameIdx] || `emp_${j}`).trim();
+                    const password = (sRow[passIdx] || '123').trim();
+
+                    // Skip team placeholders
+                    const isTeam = fullName.toLowerCase().includes('team') ||
+                      nickname.toLowerCase().includes('team') ||
+                      fullName.includes('ทีม') ||
+                      nickname.includes('ทีม') ||
+                      username.toLowerCase().includes('team');
+                    if (isTeam) continue;
+
+                    if (img && img.includes('drive.google.com')) {
+                      const m = img.match(/\/d\/([a-zA-Z0-9_-]+)/) || img.match(/id=([a-zA-Z0-9_-]+)/);
+                      if (m && m[1]) {
+                        img = `https://lh3.googleusercontent.com/d/${m[1]}`;
+                      }
+                    }
+
+                    if (img && !img.startsWith('http')) {
+                      img = `https://${img}`;
+                    }
+
+                    if (!img) {
+                      img = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(nickname || fullName || 'user')}&skinColor=f8d25c`;
+                    }
+
+                    const uUpper = username.toUpperCase();
+                    const isAdmin = uUpper.includes('ADMIN') || uUpper.includes('SPV') || uUpper.includes('MGR') || uUpper === '563770';
+
+                    if (fullName || nickname || username) {
+                      employees.push({
+                        id: `sheet-emp-${username}`,
+                        username,
+                        password,
+                        fullName,
+                        nickname,
+                        club: 'ชมรมเดิน-วิ่ง',
+                        img,
+                        status: 'active',
+                        isAdmin
+                      });
+                    }
+                  }
+                }
+                if (employees.length > 0) break; // Found and parsed staff from this tab
               }
             }
           }
+        } catch (e) {
+          console.warn(`Server fetch staff from tab '${tabName}' skipped:`, e);
         }
       }
 

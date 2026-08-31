@@ -46,27 +46,43 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ currentUser, s
   const [editClub, setEditClub] = useState<HappyLifeClub>('ชมรมเดิน-วิ่ง');
   const [editIsAdmin, setEditIsAdmin] = useState(false);
 
+  const [isSyncing, setIsSyncing] = useState(false);
+
   const loadData = () => {
     setEmployees(StorageService.getEmployees());
+  };
+
+  const handleSyncSheet = async () => {
+    setIsSyncing(true);
+    try {
+      const sheetId = StorageService.getGoogleSheetId();
+      const res = await StorageService.fetchAndSyncFromGoogleSheet(sheetId);
+      loadData();
+      if (res.success) {
+        showToast('success', 'ซิงค์ข้อมูลจาก Google Sheet เรียบร้อยแล้ว!');
+      } else {
+        showToast('error', res.message || 'ซิงค์ข้อมูลไม่สำเร็จ');
+      }
+    } catch (e: any) {
+      showToast('error', `เกิดข้อผิดพลาดในการซิงค์: ${e.message}`);
+    } finally {
+      setIsSyncing(false);
+    }
   };
 
   useEffect(() => {
     loadData();
   }, []);
 
-  if (!isAuthorizedAdminUser(currentUser)) {
-    return (
-      <div className="min-h-full bg-slate-950 p-8 text-center text-slate-400 flex flex-col items-center justify-center">
-        <div className="w-16 h-16 bg-rose-500/20 text-rose-400 rounded-3xl flex items-center justify-center text-3xl mb-4 border border-rose-500/30">
-          <i className="fa-solid fa-lock"></i>
-        </div>
-        <h2 className="font-th font-extrabold text-xl text-white">ไม่มีสิทธิ์เข้าถึงหน้าตั้งค่าผู้ดูแลระบบ</h2>
-        <p className="text-sm text-slate-300 mt-2 max-w-md">
-          หน้าการตั้งค่าพนักงาน ชมรม และระบบนี้ จำกัดสิทธิ์สำหรับผู้ดูแลระบบ 3 บัญชีผู้ใช้เท่านั้น: <strong className="text-emerald-400 font-mono">SPV_BME</strong>, <strong className="text-emerald-400 font-mono">MGR_BME</strong> และ <strong className="text-emerald-400 font-mono">563770</strong>
-        </p>
-      </div>
-    );
-  }
+  const isSuperAdmin = isAuthorizedAdminUser(currentUser);
+
+  const canEditEmployee = (emp: Employee) => {
+    if (!currentUser) return false;
+    if (isSuperAdmin) return true;
+    const uSelf = (currentUser.username || '').trim().toLowerCase();
+    const uEmp = (emp.username || '').trim().toLowerCase();
+    return emp.id === currentUser.id || (uSelf !== '' && uSelf === uEmp);
+  };
 
   const handleImageFileUpload = (e: React.ChangeEvent<HTMLInputElement>, setTargetUrl: (url: string) => void) => {
     const file = e.target.files?.[0];
@@ -121,6 +137,10 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ currentUser, s
   };
 
   const openEditModal = (emp: Employee) => {
+    if (!canEditEmployee(emp)) {
+      showToast('error', 'คุณสามารถแก้ไขได้เฉพาะข้อมูลและรูปโปรไฟล์ของตนเองเท่านั้น');
+      return;
+    }
     setEditingEmp(emp);
     setEditFullName(emp.fullName);
     setEditNickname(emp.nickname);
@@ -135,6 +155,11 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ currentUser, s
     e.preventDefault();
     if (!editingEmp) return;
 
+    if (!canEditEmployee(editingEmp)) {
+      showToast('error', 'คุณสามารถแก้ไขได้เฉพาะข้อมูลและรูปโปรไฟล์ของตนเองเท่านั้น');
+      return;
+    }
+
     if (!editFullName.trim() || !editNickname.trim() || !editUsername.trim()) {
       showToast('error', 'กรุณากรอกข้อมูล ชื่อเต็ม ชื่อเล่น และ Username ให้ครบถ้วน');
       return;
@@ -143,11 +168,11 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ currentUser, s
     const updated = StorageService.updateEmployee(editingEmp.id, {
       fullName: editFullName.trim(),
       nickname: editNickname.trim(),
-      username: editUsername.trim(),
+      username: isSuperAdmin ? editUsername.trim() : editingEmp.username,
       password: editPassword.trim(),
       img: editImgUrl.trim() || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(editNickname.trim())}&skinColor=f8d25c`,
       club: editClub,
-      isAdmin: editIsAdmin
+      isAdmin: isSuperAdmin ? editIsAdmin : editingEmp.isAdmin
     });
 
     if (updated) {
@@ -158,6 +183,11 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ currentUser, s
   };
 
   const handleStatusToggle = (emp: Employee) => {
+    if (!isSuperAdmin) {
+      showToast('error', 'การเปลี่ยนสถานะการทำงาน (Active/ลาออก) สงวนสิทธิ์สำหรับ Admin 3 บัญชีเท่านั้น');
+      return;
+    }
+
     const newStatus = emp.status === 'active' ? 'resigned' : 'active';
     const statusText = newStatus === 'active' ? 'Active (ยังทำงานอยู่)' : 'Resigned (ลาออกแล้ว)';
 
@@ -175,6 +205,14 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ currentUser, s
   };
 
   const filteredEmployees = employees.filter(emp => {
+    // Filter out team placeholder accounts
+    const f = (emp.fullName || '').toLowerCase();
+    const n = (emp.nickname || '').toLowerCase();
+    const u = (emp.username || '').toLowerCase();
+    if (f.includes('team') || n.includes('team') || f.includes('ทีม') || n.includes('ทีม') || u.includes('team') || u === 'emp_15') {
+      return false;
+    }
+
     if (statusFilter !== 'all' && emp.status !== statusFilter) return false;
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase().trim();
@@ -197,18 +235,54 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ currentUser, s
           </div>
           <div>
             <h1 className="font-th font-extrabold text-xl text-white">จัดการพนักงาน & รูปโปรไฟล์</h1>
-            <p className="text-xs text-slate-300 font-medium">เพิ่มพนักงาน, อัปเดตรูปภาพโปรไฟล์ประจำตัว และสังกัดชมรม (Admin Only)</p>
+            <p className="text-xs text-slate-300 font-medium">
+              {isSuperAdmin
+                ? 'เพิ่มพนักงาน, อัปเดตรูปภาพโปรไฟล์ประจำตัว และสังกัดชมรม (Admin Full Access)'
+                : 'อัปเดตรูปภาพโปรไฟล์ประจำตัว ข้อมูลส่วนตัว และสังกัดชมรมของคุณ'}
+            </p>
           </div>
         </div>
 
-        <button
-          onClick={() => setIsAdding(!isAdding)}
-          className="px-5 py-2.5 rounded-2xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-th font-bold text-xs shadow-lg flex items-center gap-2 transition-all border border-white/20"
-        >
-          <i className={`fa-solid ${isAdding ? 'fa-minus' : 'fa-plus'}`}></i>
-          <span>{isAdding ? 'ซ่อนฟอร์ม' : 'เพิ่มพนักงานใหม่'}</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={handleSyncSheet}
+            disabled={isSyncing}
+            className="px-4 py-2.5 rounded-2xl bg-emerald-600/80 hover:bg-emerald-500 text-white font-th font-bold text-xs shadow-lg flex items-center gap-2 transition-all border border-emerald-400/30 disabled:opacity-50"
+          >
+            <i className={`fa-solid fa-rotate ${isSyncing ? 'animate-spin' : ''}`}></i>
+            <span>{isSyncing ? 'กำลังซิงค์...' : 'ซิงค์ข้อมูลพนักงาน Google Sheet'}</span>
+          </button>
+
+          {isSuperAdmin && (
+            <button
+              onClick={() => setIsAdding(!isAdding)}
+              className="px-5 py-2.5 rounded-2xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-th font-bold text-xs shadow-lg flex items-center gap-2 transition-all border border-white/20"
+            >
+              <i className={`fa-solid ${isAdding ? 'fa-minus' : 'fa-plus'}`}></i>
+              <span>{isAdding ? 'ซ่อนฟอร์ม' : 'เพิ่มพนักงานใหม่'}</span>
+            </button>
+          )}
+        </div>
       </div>
+
+      {/* Non-Admin Notice Banner */}
+      {!isSuperAdmin && currentUser && (
+        <div className="bg-slate-900/90 border border-purple-500/30 rounded-2xl p-4 text-xs text-slate-200 flex items-start gap-3 shadow-xl">
+          <div className="w-9 h-9 rounded-xl bg-purple-500/20 text-purple-300 flex items-center justify-center text-lg flex-shrink-0 border border-purple-500/30">
+            <i className="fa-solid fa-user-shield"></i>
+          </div>
+          <div className="space-y-1">
+            <strong className="text-white text-sm">สิทธิ์การใช้งานของท่าน: {currentUser.fullName} ({currentUser.nickname})</strong>
+            <p className="text-slate-300 leading-relaxed">
+              คุณสามารถกดปุ่ม <span className="text-purple-300 font-bold bg-purple-500/20 px-2 py-0.5 rounded">แก้ไขโปรไฟล์ของฉัน</span> ที่การ์ดชื่อของคุณเพื่ออัปเดตรูปภาพและข้อมูลประจำตัวได้ทันที
+              <span className="block text-[11px] text-amber-300/80 mt-0.5">
+                *(การแก้ไขข้อมูลพนักงานท่านอื่น และการเพิ่มพนักงานใหม่ สงวนสิทธิ์สำหรับ Admin 3 บัญชีเท่านั้น: <strong>SPV_BME</strong>, <strong>MGR_BME</strong> และ <strong>563770</strong>)*
+              </span>
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Add Employee Form */}
       {isAdding && (
@@ -382,70 +456,95 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ currentUser, s
 
       {/* Employee Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {filteredEmployees.map(emp => (
-          <div
-            key={emp.id}
-            className={`p-4 rounded-2xl border transition-all flex flex-col justify-between gap-3 ${
-              emp.status === 'active'
-                ? 'bg-slate-900/80 border-slate-800 hover:border-slate-700'
-                : 'bg-slate-950/60 border-rose-950 opacity-60'
-            }`}
-          >
-            <div className="flex items-center gap-3">
-              <div className="relative group">
-                <img
-                  src={emp.img}
-                  alt={emp.nickname}
-                  className="w-14 h-14 rounded-2xl object-cover bg-slate-800 border border-white/10 flex-shrink-0 shadow-md"
-                  onError={e => {
-                    (e.target as HTMLImageElement).src = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(emp.nickname)}&skinColor=f8d25c`;
-                  }}
-                />
+        {filteredEmployees.map(emp => {
+          const editable = canEditEmployee(emp);
+          const isSelf = currentUser && (
+            emp.id === currentUser.id ||
+            (emp.username && currentUser.username && emp.username.toLowerCase() === currentUser.username.toLowerCase())
+          );
+
+          return (
+            <div
+              key={emp.id}
+              className={`p-4 rounded-2xl border transition-all flex flex-col justify-between gap-3 ${
+                isSelf
+                  ? 'bg-purple-950/30 border-purple-500/50 shadow-lg shadow-purple-950/40 ring-1 ring-purple-500/30'
+                  : emp.status === 'active'
+                  ? 'bg-slate-900/80 border-slate-800 hover:border-slate-700'
+                  : 'bg-slate-950/60 border-rose-950 opacity-60'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <div className="relative group">
+                  <img
+                    src={emp.img}
+                    alt={emp.nickname}
+                    referrerPolicy="no-referrer"
+                    className="w-14 h-14 rounded-2xl object-cover bg-slate-800 border border-white/10 flex-shrink-0 shadow-md"
+                    onError={e => {
+                      (e.target as HTMLImageElement).src = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(emp.nickname)}&skinColor=f8d25c`;
+                    }}
+                  />
+                  {editable && (
+                    <button
+                      onClick={() => openEditModal(emp)}
+                      title="เปลี่ยนรูปภาพ / แก้ไขข้อมูล"
+                      className="absolute inset-0 bg-black/60 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-xs font-bold"
+                    >
+                      <i className="fa-solid fa-pen-to-square"></i>
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex-1 min-w-0">
+                  <div className="font-th font-extrabold text-sm text-white truncate flex items-center gap-1.5">
+                    <span>{emp.fullName} ({emp.nickname})</span>
+                    {emp.isAdmin && <span className="bg-purple-500/20 text-purple-300 text-[9px] font-black px-1.5 py-0.5 rounded">ADMIN</span>}
+                    {isSelf && <span className="bg-emerald-500/20 text-emerald-300 text-[9px] font-black px-1.5 py-0.5 rounded border border-emerald-500/30">คุณ</span>}
+                  </div>
+                  <div className="text-xs text-slate-400 font-mono">User: {emp.username}</div>
+                  <div className="text-[10px] text-emerald-400 font-bold mt-0.5">
+                    <i className="fa-solid fa-users-rectangle mr-1"></i>{emp.club}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between pt-2 border-t border-slate-800 gap-2">
+                {editable ? (
+                  <button
+                    onClick={() => openEditModal(emp)}
+                    className="px-2.5 py-1.5 rounded-xl bg-purple-600/30 hover:bg-purple-600 border border-purple-500/40 text-purple-200 hover:text-white font-bold text-xs flex items-center gap-1.5 transition-all shadow-md"
+                  >
+                    <i className="fa-solid fa-user-pen"></i>
+                    <span>{isSelf ? 'แก้ไขโปรไฟล์ของฉัน' : 'แก้ไขรูปภาพ / ข้อมูล'}</span>
+                  </button>
+                ) : (
+                  <span className="text-[11px] text-slate-500 font-medium flex items-center gap-1 py-1 px-2 rounded-lg bg-slate-950/40 border border-slate-800">
+                    <i className="fa-solid fa-lock text-slate-600 text-[10px]"></i>
+                    <span>จำกัดสิทธิ์แก้ไข</span>
+                  </span>
+                )}
+
+                {/* Status Toggle Button */}
                 <button
-                  onClick={() => openEditModal(emp)}
-                  title="เปลี่ยนรูปภาพ / แก้ไขข้อมูล"
-                  className="absolute inset-0 bg-black/60 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-xs font-bold"
+                  onClick={() => handleStatusToggle(emp)}
+                  disabled={!isSuperAdmin}
+                  title={!isSuperAdmin ? 'สิทธิ์เปลี่ยนสถานะการทำงานเฉพาะ Admin 3 ท่านเท่านั้น' : ''}
+                  className={`px-3 py-1.5 rounded-xl font-bold text-xs transition-all flex items-center gap-1.5 ${
+                    !isSuperAdmin ? 'opacity-70 cursor-not-allowed' : ''
+                  } ${
+                    emp.status === 'active'
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-rose-500/20 hover:text-rose-300 hover:border-rose-500/30'
+                      : 'bg-rose-500/20 text-rose-300 border border-rose-500/30 hover:bg-emerald-500/20 hover:text-emerald-300'
+                  }`}
                 >
-                  <i className="fa-solid fa-pen-to-square"></i>
+                  <span className={`w-2 h-2 rounded-full ${emp.status === 'active' ? 'bg-emerald-400' : 'bg-rose-400'}`}></span>
+                  <span>{emp.status === 'active' ? 'Active' : 'ลาออกแล้ว'}</span>
                 </button>
               </div>
-
-              <div className="flex-1 min-w-0">
-                <div className="font-th font-extrabold text-sm text-white truncate flex items-center gap-2">
-                  <span>{emp.fullName} ({emp.nickname})</span>
-                  {emp.isAdmin && <span className="bg-purple-500/20 text-purple-300 text-[9px] font-black px-1.5 py-0.5 rounded">ADMIN</span>}
-                </div>
-                <div className="text-xs text-slate-400 font-mono">User: {emp.username}</div>
-                <div className="text-[10px] text-emerald-400 font-bold mt-0.5">
-                  <i className="fa-solid fa-users-rectangle mr-1"></i>{emp.club}
-                </div>
-              </div>
             </div>
-
-            <div className="flex items-center justify-between pt-2 border-t border-slate-800 gap-2">
-              <button
-                onClick={() => openEditModal(emp)}
-                className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-purple-300 font-bold text-xs flex items-center gap-1.5"
-              >
-                <i className="fa-solid fa-user-pen"></i>
-                <span>แก้ไขรูปภาพ / ข้อมูล</span>
-              </button>
-
-              {/* Status Toggle Button */}
-              <button
-                onClick={() => handleStatusToggle(emp)}
-                className={`px-3 py-1.5 rounded-xl font-bold text-xs transition-all flex items-center gap-1.5 ${
-                  emp.status === 'active'
-                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-rose-500/20 hover:text-rose-300 hover:border-rose-500/30'
-                    : 'bg-rose-500/20 text-rose-300 border border-rose-500/30 hover:bg-emerald-500/20 hover:text-emerald-300'
-                }`}
-              >
-                <span className={`w-2 h-2 rounded-full ${emp.status === 'active' ? 'bg-emerald-400' : 'bg-rose-400'}`}></span>
-                <span>{emp.status === 'active' ? 'Active' : 'ลาออกแล้ว'}</span>
-              </button>
-            </div>
-          </div>
-        ))}
+          );
+        })}
 
         {filteredEmployees.length === 0 && (
           <div className="col-span-full py-12 text-center text-slate-500 text-xs">
@@ -557,12 +656,15 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ currentUser, s
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1">Username</label>
+                <label className="block text-xs font-bold text-slate-300 mb-1">Username {!isSuperAdmin && '(อ่านอย่างเดียว)'}</label>
                 <input
                   type="text"
                   value={editUsername}
                   onChange={e => setEditUsername(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs font-semibold outline-none focus:border-purple-500"
+                  disabled={!isSuperAdmin}
+                  className={`w-full px-3 py-2 rounded-xl border text-white text-xs font-semibold outline-none focus:border-purple-500 ${
+                    !isSuperAdmin ? 'bg-slate-950/80 border-slate-800 text-slate-400 cursor-not-allowed' : 'bg-slate-800 border-slate-700'
+                  }`}
                   required
                 />
               </div>
@@ -589,18 +691,20 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ currentUser, s
               </div>
             </div>
 
-            <div className="flex items-center gap-2 pt-1">
-              <input
-                type="checkbox"
-                id="editIsAdminCheck"
-                checked={editIsAdmin}
-                onChange={e => setEditIsAdmin(e.target.checked)}
-                className="w-4 h-4 rounded border-slate-700 text-purple-600 focus:ring-purple-500"
-              />
-              <label htmlFor="editIsAdminCheck" className="text-xs font-bold text-purple-300 cursor-pointer">
-                แต่งตั้งเป็นผู้ดูแลระบบ (Admin Permissions)
-              </label>
-            </div>
+            {isSuperAdmin && (
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  type="checkbox"
+                  id="editIsAdminCheck"
+                  checked={editIsAdmin}
+                  onChange={e => setEditIsAdmin(e.target.checked)}
+                  className="w-4 h-4 rounded border-slate-700 text-purple-600 focus:ring-purple-500"
+                />
+                <label htmlFor="editIsAdminCheck" className="text-xs font-bold text-purple-300 cursor-pointer">
+                  แต่งตั้งเป็นผู้ดูแลระบบ (Admin Permissions)
+                </label>
+              </div>
+            )}
 
             <div className="flex gap-3 pt-3 border-t border-white/10">
               <button

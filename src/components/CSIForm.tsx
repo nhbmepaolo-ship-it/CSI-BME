@@ -66,6 +66,16 @@ export const CSIForm: React.FC<CSIFormProps> = ({ onSuccessSubmitted, showModal 
     setSelectedStaffKeys(next);
   };
 
+  const handleSelectAllBMETeam = () => {
+    const allKeys = employees.map(e => `${e.fullName} (${e.nickname})`);
+    const allSelected = allKeys.length > 0 && allKeys.every(k => selectedStaffKeys.has(k));
+    if (allSelected) {
+      setSelectedStaffKeys(new Set());
+    } else {
+      setSelectedStaffKeys(new Set(allKeys));
+    }
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedDept) {
@@ -310,14 +320,26 @@ export const CSIForm: React.FC<CSIFormProps> = ({ onSuccessSubmitted, showModal 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
               {/* Praised Staff */}
               <div className="bg-emerald-950/30 border border-emerald-500/30 backdrop-blur-md rounded-2xl p-5">
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="w-8 h-8 rounded-xl bg-emerald-500/80 border border-emerald-400/40 flex items-center justify-center text-white shadow-sm">
-                    <i className="fa-solid fa-heart text-xs"></i>
+                <div className="flex items-center justify-between gap-2 mb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-xl bg-emerald-500/80 border border-emerald-400/40 flex items-center justify-center text-white shadow-sm">
+                      <i className="fa-solid fa-heart text-xs"></i>
+                    </div>
+                    <div>
+                      <h3 className="font-th text-base font-bold text-emerald-200">พนักงานที่ประทับใจ <span className="text-rose-400">*</span></h3>
+                      <p className="text-[10px] text-emerald-400/80 font-bold">เลือกได้มากกว่า 1 คน หรือเลือกทีม BME ทั้งหมด</p>
+                    </div>
                   </div>
-                  <div>
-                    <h3 className="font-th text-base font-bold text-emerald-200">พนักงานที่ประทับใจ <span className="text-rose-400">*</span></h3>
-                    <p className="text-[10px] text-emerald-400/80 font-bold">เลือกได้มากกว่า 1 คน</p>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={handleSelectAllBMETeam}
+                    className="px-3 py-1.5 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white rounded-xl text-xs font-bold transition-all shadow-md border border-emerald-400/30 flex items-center gap-1.5 flex-shrink-0"
+                  >
+                    <i className="fa-solid fa-users text-xs"></i>
+                    {employees.length > 0 && employees.every(e => selectedStaffKeys.has(`${e.fullName} (${e.nickname})`))
+                      ? '✕ ยกเลิกทั้งหมด'
+                      : '✨ เลือกทีม BME ทั้งหมด'}
+                  </button>
                 </div>
 
                 {/* Tags */}

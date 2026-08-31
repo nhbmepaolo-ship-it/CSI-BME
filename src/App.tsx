@@ -57,7 +57,21 @@ export default function App() {
       const res = await StorageService.fetchAndSyncFromGoogleSheet();
       if (res.success) {
         setSyncVersion(prev => prev + 1);
-        if (!silent) showToast('success', 'ซิงค์ข้อมูลล่าสุดจาก Google Sheet ทั้งหมดเรียบร้อยแล้ว');
+
+        // Refresh current user if data changed in Google Sheet
+        const freshEmps = StorageService.getEmployees();
+        const currentStored = StorageService.getCurrentUser();
+        if (currentStored) {
+          const matched = freshEmps.find(
+            e => e.id === currentStored.id || (e.username && currentStored.username && e.username.toLowerCase() === currentStored.username.toLowerCase())
+          );
+          if (matched) {
+            setCurrentUser(matched);
+            StorageService.setCurrentUser(matched);
+          }
+        }
+
+        if (!silent) showToast('success', 'ซิงค์ข้อมูลล่าสุดจาก Google Sheet เรียบร้อยแล้ว');
       } else if (!silent) {
         showToast('error', res.message || 'ซิงค์ข้อมูลไม่สำเร็จ');
       }
@@ -80,8 +94,15 @@ export default function App() {
       if (defaultUser) StorageService.setCurrentUser(defaultUser);
     }
 
-    // Auto sync all Google Sheet data on initial load
+    // Immediately trigger auto-sync from Google Sheet on app startup
     triggerGlobalSync(true);
+
+    // Set up periodic background auto-sync every 2 minutes (120,000 ms)
+    const syncInterval = setInterval(() => {
+      triggerGlobalSync(true);
+    }, 120000);
+
+    return () => clearInterval(syncInterval);
   }, []);
 
   const handleLogin = (user: Employee) => {
@@ -237,21 +258,19 @@ export default function App() {
             การจัดการ & ประกาศ
           </div>
 
-          {isAuthorizedAdminUser(currentUser) && (
-            <button
-              onClick={() => { setActivePage('staff-mgr'); setSidebarOpen(false); }}
-              className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl font-th text-xs font-bold transition-all ${
-                activePage === 'staff-mgr'
-                  ? 'bg-purple-500/25 text-purple-200 border border-purple-400/40 shadow-lg shadow-purple-500/10 backdrop-blur-md'
-                  : 'text-slate-300/80 hover:bg-white/10 hover:text-white border border-transparent'
-              }`}
-            >
-              <div className="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center text-purple-300">
-                <i className="fa-solid fa-users-gear"></i>
-              </div>
-              <span>จัดการพนักงาน & ชมรม</span>
-            </button>
-          )}
+          <button
+            onClick={() => { setActivePage('staff-mgr'); setSidebarOpen(false); }}
+            className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl font-th text-xs font-bold transition-all ${
+              activePage === 'staff-mgr'
+                ? 'bg-purple-500/25 text-purple-200 border border-purple-400/40 shadow-lg shadow-purple-500/10 backdrop-blur-md'
+                : 'text-slate-300/80 hover:bg-white/10 hover:text-white border border-transparent'
+            }`}
+          >
+            <div className="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center text-purple-300">
+              <i className="fa-solid fa-users-gear"></i>
+            </div>
+            <span>จัดการพนักงาน & โปรไฟล์</span>
+          </button>
 
           <button
             onClick={() => { setActivePage('card-notify'); setSidebarOpen(false); }}
