@@ -447,9 +447,12 @@ export const NotificationCard: React.FC<NotificationCardProps> = ({ currentUser,
     }
   };
 
-  const handleShareToLineApp = () => {
-    // LINE URL Scheme fails with HTTP 400 if text parameter is too long (> 500 chars).
-    // Automatically switch to compact emoji-rich summary card when length exceeds 500 characters.
+  const handleShareToLineApp = async () => {
+    try {
+      await navigator.clipboard.writeText(generatedCardText);
+    } catch {
+      // Ignore clipboard permission issues
+    }
     const textToShare = generatedCardText.length > 500 ? generatedEmojiShortText : generatedCardText;
     const encodedText = encodeURIComponent(textToShare);
     const lineUrl = `https://line.me/R/msg/text/?${encodedText}`;
@@ -488,7 +491,7 @@ export const NotificationCard: React.FC<NotificationCardProps> = ({ currentUser,
       if (!lineChannelToken && !lineWebhookUrl) {
         // Fallback to direct share link if no API key/Webhook is entered
         handleShareToLineApp();
-        showToast('success', 'เปิดแอป LINE สำหรับส่งข้อความการ์ดประกาศเรียบร้อยแล้ว (หรือใส่ Token ในการตั้งค่าเพื่อส่งอัตโนมัติ)');
+        showToast('success', 'เปิดแอป LINE สำหรับส่งข้อความการ์ดประกาศเรียบร้อยแล้ว (เลือกกลุ่มหรือเพื่อนเพื่อส่งได้ทันที)');
         return;
       }
 
@@ -509,12 +512,15 @@ export const NotificationCard: React.FC<NotificationCardProps> = ({ currentUser,
         });
         const data = await res.json().catch(() => ({ success: false, message: `Server HTTP ${res.status}` }));
         if (data.success) {
-          showToast('success', data.message || 'ส่งการ์ดประกาศ Flex Message ไปยัง LINE เรียบร้อยแล้ว!');
+          showToast('success', data.message || 'ส่งการ์ดประกาศไปยัง LINE เรียบร้อยแล้ว!');
         } else {
-          showToast('error', data.message || 'ส่งไปยัง LINE ไม่สำเร็จ โปรดตรวจสอบ Token หรือ Webhook URL');
+          // Fallback to direct share when API push is unable to complete
+          handleShareToLineApp();
+          showToast('error', `${data.message || 'ส่งผ่าน API ไม่สำเร็จ'} -> ระบบเปิดแอป LINE และคัดลอกข้อความให้ส่งโดยตรงแล้ว`);
         }
       } catch (err: any) {
-        showToast('error', `ไม่สามารถเชื่อมต่อ Server เพื่อส่ง LINE ได้ (${err?.message || 'Network Error'})`);
+        handleShareToLineApp();
+        showToast('error', `เกิดข้อผิดพลาดในการเชื่อมต่อ -> ระบบเปิดแอป LINE ให้คุณส่งโดยตรงแล้ว (${err?.message || 'Network Error'})`);
       } finally {
         setIsSubmitting(false);
       }

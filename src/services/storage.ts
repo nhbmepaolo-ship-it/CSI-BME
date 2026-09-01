@@ -532,24 +532,29 @@ export class StorageService {
   // Card Settings
   static getCardSettings(): CardAnnouncementSettings {
     const data = localStorage.getItem(KEYS.CARD_SETTINGS);
+    const defaultToken = 'wg1swtQ3O2KBtBTa461HHn9gRzygFKVYykKBWUI3F4IPSk7HnbXNz+/3zn05pBnfVYvj3K+rz9FF1Hi+ZUXWShiuf1yEzRdNOVjsp6xOB1cPdhzSSxHQr/VrZYWn1I8HOsD9aP3zs0Npg8DRyfekYwdB04t89/1O/w1cDnyilFU=';
+    const defaultGroupId = 'C1f1109f61de6683b2337dfa8d3a5ba4d';
+    const defaultUserId = 'Ucbf8c9e32fc2606a570a51bbc595d5e9';
+    const defaultWebhook = 'https://webhook.site/f6b4e22d-2b91-4ac3-93a7-939af98716f3';
+
     if (data) {
       try {
         const parsed = JSON.parse(data);
         return {
-          lineWebhookUrl: parsed.lineWebhookUrl || 'https://webhook.site/f6b4e22d-2b91-4ac3-93a7-939af98716f3',
-          lineChannelToken: parsed.lineChannelToken && !parsed.lineChannelToken.startsWith('uiEPGy') ? parsed.lineChannelToken : 'wg1swtQ3O2KBtBTa461HHn9gRzygFKVYykKBWUI3F4IPSk7HnbXNz+/3zn05pBnfVYvj3K+rz9FF1Hi+ZUXWShiuf1yEzRdNOVjsp6xOB1cPdhzSSxHQr/VrZYWn1I8HOsD9aP3zs0Npg8DRyfekYwdB04t89/1O/w1cDnyilFU=',
-          lineGroupId: parsed.lineGroupId || 'C1f1109f61de6683b2337dfa8d3a5ba4d',
-          lineUserId: parsed.lineUserId || 'Ucbf8c9e32fc2606a570a51bbc595d5e9',
+          lineWebhookUrl: parsed.lineWebhookUrl || defaultWebhook,
+          lineChannelToken: parsed.lineChannelToken || defaultToken,
+          lineGroupId: parsed.lineGroupId || defaultGroupId,
+          lineUserId: parsed.lineUserId || defaultUserId,
           telegramBotToken: parsed.telegramBotToken || '',
           telegramChatId: parsed.telegramChatId || ''
         };
       } catch { return {}; }
     }
     return {
-      lineWebhookUrl: 'https://webhook.site/f6b4e22d-2b91-4ac3-93a7-939af98716f3',
-      lineChannelToken: 'wg1swtQ3O2KBtBTa461HHn9gRzygFKVYykKBWUI3F4IPSk7HnbXNz+/3zn05pBnfVYvj3K+rz9FF1Hi+ZUXWShiuf1yEzRdNOVjsp6xOB1cPdhzSSxHQr/VrZYWn1I8HOsD9aP3zs0Npg8DRyfekYwdB04t89/1O/w1cDnyilFU=',
-      lineGroupId: 'C1f1109f61de6683b2337dfa8d3a5ba4d',
-      lineUserId: 'Ucbf8c9e32fc2606a570a51bbc595d5e9',
+      lineWebhookUrl: defaultWebhook,
+      lineChannelToken: defaultToken,
+      lineGroupId: defaultGroupId,
+      lineUserId: defaultUserId,
       telegramBotToken: '',
       telegramChatId: ''
     };
