@@ -62,18 +62,16 @@ export default function App() {
       if (res.success) {
         setSyncVersion(prev => prev + 1);
 
-        // Refresh current user if data changed in Google Sheet
+        // Refresh current user's data (photo, name, etc.) if it changed in the Google Sheet,
+        // without relying on any persisted/stored login session
         const freshEmps = StorageService.getEmployees();
-        const currentStored = StorageService.getCurrentUser();
-        if (currentStored) {
+        setCurrentUser(prevUser => {
+          if (!prevUser) return prevUser;
           const matched = freshEmps.find(
-            e => e.id === currentStored.id || (e.username && currentStored.username && e.username.toLowerCase() === currentStored.username.toLowerCase())
+            e => e.id === prevUser.id || (e.username && prevUser.username && e.username.toLowerCase() === prevUser.username.toLowerCase())
           );
-          if (matched) {
-            setCurrentUser(matched);
-            StorageService.setCurrentUser(matched);
-          }
-        }
+          return matched || prevUser;
+        });
 
         if (!silent) showToast('success', 'ซิงค์ข้อมูลล่าสุดจาก Google Sheet เรียบร้อยแล้ว');
       } else if (!silent) {
@@ -87,16 +85,14 @@ export default function App() {
   };
 
   useEffect(() => {
-    // Load persisted user or default employee
-    const stored = StorageService.getCurrentUser();
-    if (stored) {
-      setCurrentUser(stored);
-    } else {
-      const employees = StorageService.getEmployees();
-      const defaultUser = employees.find(e => e.username === '563770') || employees[0] || null;
-      setCurrentUser(defaultUser);
-      if (defaultUser) StorageService.setCurrentUser(defaultUser);
-    }
+    // Intentionally do NOT restore any previously logged-in user — every time the app is
+    // opened (reload, new tab, new device) it must start from the default BME PTP identity,
+    // never a "stuck" login session from before.
+    StorageService.setCurrentUser(null); // clear any leftover session from earlier versions of the app
+
+    const employees = StorageService.getEmployees();
+    const defaultUser = employees.find(e => e.username === '563770') || employees[0] || null;
+    setCurrentUser(defaultUser);
 
     // Immediately trigger auto-sync from Google Sheet on app startup
     triggerGlobalSync(true);
@@ -110,14 +106,17 @@ export default function App() {
   }, []);
 
   const handleLogin = (user: Employee) => {
+    // Kept only in memory for this session — never written to localStorage,
+    // so a login never "ค้าง" (persists) into the next time the app is opened.
     setCurrentUser(user);
-    StorageService.setCurrentUser(user);
   };
 
   const handleLogout = () => {
-    setCurrentUser(null);
-    StorageService.setCurrentUser(null);
-    showToast('success', 'ออกจากระบบเรียบร้อยแล้ว');
+    // Always fall back to the default BME PTP identity, never a blank/stuck state
+    const employees = StorageService.getEmployees();
+    const defaultUser = employees.find(e => e.username === '563770') || employees[0] || null;
+    setCurrentUser(defaultUser);
+    showToast('success', 'ออกจากระบบเรียบร้อยแล้ว กลับสู่ค่าเริ่มต้น');
   };
 
   const showModal = (type: 'success' | 'warning', title: string, body: string) => {
@@ -437,7 +436,7 @@ export default function App() {
               key={syncVersion}
               currentUser={currentUser}
               onLogin={user => setCurrentUser(user)}
-              onLogout={() => setCurrentUser(null)}
+              onLogout={handleLogout}
               showToast={showToast}
             />
           )}

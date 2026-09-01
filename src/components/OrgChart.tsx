@@ -60,6 +60,30 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
     setEmployees(allEmps);
   }, []);
 
+  // Live lookup maps so every node's photo always matches the current employee data
+  // (instead of a stale photoUrl snapshot saved into the org chart config in the past)
+  const employeeById = React.useMemo(() => {
+    const map = new Map<string, Employee>();
+    employees.forEach(e => map.set(e.id, e));
+    return map;
+  }, [employees]);
+
+  const employeeByName = React.useMemo(() => {
+    const map = new Map<string, Employee>();
+    employees.forEach(e => map.set(e.fullName.trim().toLowerCase(), e));
+    return map;
+  }, [employees]);
+
+  // Resolve the photo to show for a node: prefer the live employee record (matched by
+  // employeeId, falling back to matching full name), then fall back to the node's saved
+  // photoUrl, so the org chart photo always stays matched with employee data.
+  const resolveNodePhoto = (node: OrgNode): string => {
+    const matched =
+      (node.employeeId && employeeById.get(node.employeeId)) ||
+      employeeByName.get(node.fullName.trim().toLowerCase());
+    return matched?.img || node.photoUrl || '';
+  };
+
   const getProxiedImageUrl = (url?: string) => {
     if (!url) return '';
     if (url.startsWith('data:') || url.startsWith('blob:')) return url;
@@ -367,7 +391,7 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
               isTopLevel ? 'border-sky-400 ring-4 ring-sky-500/20' : 'border-white/40'
             }`}>
               <img
-                src={getProxiedImageUrl(node.photoUrl) || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(node.fullName)}`}
+                src={getProxiedImageUrl(resolveNodePhoto(node)) || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(node.fullName)}`}
                 alt={node.fullName}
                 className="w-full h-full object-cover"
                 onError={e => {

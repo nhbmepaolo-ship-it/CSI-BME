@@ -754,12 +754,39 @@ export class StorageService {
         this.saveEmployees(updatedList);
       }
 
+      // Sync "แผนพัฒนา" (Coaching/IDP) records fetched from the Google Sheet
+      const fetchedCoaching: CoachingRecord[] = data.coachingRecords || [];
+      if (fetchedCoaching.length > 0) {
+        const existingCoaching = this.getCoachingRecords();
+        const coachMap = new Map<string, CoachingRecord>();
+        existingCoaching.forEach(c => {
+          if (c.empId) coachMap.set(c.empId, c);
+        });
+
+        fetchedCoaching.forEach(sheetRec => {
+          const existing = coachMap.get(sheetRec.empId);
+          coachMap.set(sheetRec.empId, {
+            ...sheetRec,
+            // Identity & plan fields always follow the current Google Sheet (source of truth)
+            // Weekly hour breakdown stays local since the sheet only tracks a single total hours column
+            hoursW1: existing?.hoursW1 ?? sheetRec.hoursW1,
+            hoursW2: existing?.hoursW2 ?? sheetRec.hoursW2,
+            hoursW3: existing?.hoursW3 ?? sheetRec.hoursW3,
+            hoursW4: existing?.hoursW4 ?? sheetRec.hoursW4,
+            hoursW5: existing?.hoursW5 ?? sheetRec.hoursW5,
+            hoursW6: existing?.hoursW6 ?? sheetRec.hoursW6
+          });
+        });
+
+        this.saveCoachingRecords(Array.from(coachMap.values()));
+      }
+
       this.saveGoogleSheetId(sheetId);
 
       return {
         success: true,
         totalFetched: fetchedCsi.length,
-        message: `เชื่อมต่อและดึงข้อมูลจาก Google Sheet (ID: ${sheetId}) สำเร็จแล้ว! พบแบบประเมินทั้งหมด ${fetchedCsi.length} รายการ`
+        message: `เชื่อมต่อและดึงข้อมูลจาก Google Sheet (ID: ${sheetId}) สำเร็จแล้ว! พบแบบประเมินทั้งหมด ${fetchedCsi.length} รายการ${fetchedCoaching.length > 0 ? ` และแผนพัฒนา ${fetchedCoaching.length} รายการ` : ''}`
       };
     } catch (err: any) {
       console.error('Error fetching sheet data:', err);
@@ -772,7 +799,7 @@ export class StorageService {
   }
 
   // Client-side fallback to parse Google Sheets CSV directly
-  private static async clientSideFetchGoogleSheet(sheetId: string): Promise<{ success: boolean; csiRecords?: CSIRecord[]; employees?: Employee[]; message?: string }> {
+  private static async clientSideFetchGoogleSheet(sheetId: string): Promise<{ success: boolean; csiRecords?: CSIRecord[]; employees?: Employee[]; coachingRecords?: CoachingRecord[]; message?: string }> {
     try {
       const parseCSV = (text: string) => {
         const lines: string[][] = [];
@@ -966,10 +993,99 @@ export class StorageService {
         }
       }
 
+      // 3. Fetch Coaching / แผนพัฒนา (try multiple common tab names)
+      const possibleCoachingTabs = ['แผนพัฒนา', 'แผนพัฒนาพนักงาน', 'Coaching', 'IDP', 'Coaching Records', 'แผนพัฒนา & Coaching', 'Sheet3'];
+      const coachingRecords: CoachingRecord[] = [];
+
+      for (const tabName of possibleCoachingTabs) {
+        try {
+          const coachUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(tabName)}`;
+          const coachRes = await fetch(coachUrl);
+          if (coachRes.ok) {
+            const coachCsv = await coachRes.text();
+            if (coachCsv && !coachCsv.includes('google-signin') && !coachCsv.includes('<!DOCTYPE html>')) {
+              const coachRows = parseCSV(coachCsv);
+              if (coachRows.length > 1) {
+                let empIdIdx = 0, typeIdx = 1, posIdx = 2, fullIdx = 3, nickIdx = 4, animalIdx = 5, coachIdx = 6, t1Idx = 7, t2Idx = 8, t3Idx = 9, scoreIdx = 10, progIdx = 11, totalHoursIdx = 12;
+
+                const header = coachRows[0].map(h => (h || '').trim().toLowerCase());
+                header.forEach((col, idx) => {
+                  if (col.includes('รหัส') || col.includes('id') || col.includes('empid')) empIdIdx = idx;
+                  if (col.includes('สัญญา') || col.includes('contract') || col.includes('ประเภทพนักงาน')) typeIdx = idx;
+                  if (col.includes('ตำแหน่ง') || col.includes('position') || col.includes('role')) posIdx = idx;
+                  if ((col.includes('ชื่อ') && !col.includes('เล่น') && !col.includes('โค้ช')) || col.includes('full') || col.includes('name')) fullIdx = idx;
+                  if (col.includes('เล่น') || col.includes('nick')) nickIdx = idx;
+                  if (col.includes('สัตว์') || col.includes('disc') || col.includes('animal')) animalIdx = idx;
+                  if (col.includes('โค้ช') || col.includes('coach')) coachIdx = idx;
+                  if (col.includes('ลำดับที่ 1') || col.includes('เรื่องที่ 1') || col.includes('topic1') || col.includes('topic 1')) t1Idx = idx;
+                  if (col.includes('ลำดับที่ 2') || col.includes('เรื่องที่ 2') || col.includes('topic2') || col.includes('topic 2')) t2Idx = idx;
+                  if (col.includes('ลำดับที่ 3') || col.includes('เรื่องที่ 3') || col.includes('topic3') || col.includes('topic 3')) t3Idx = idx;
+                  if (col.includes('คะแนน') || col.includes('score') || col.includes('eval')) scoreIdx = idx;
+                  if (col.includes('ก้าวหน้า') || col.includes('progress') || col.includes('%')) progIdx = idx;
+                  if (col.includes('ชั่วโมง') || col.includes('hours') || col.includes('total')) totalHoursIdx = idx;
+                });
+
+                for (let j = 1; j < coachRows.length; j++) {
+                  const cRow = coachRows[j];
+                  if (cRow && cRow.length >= 3) {
+                    const cleanStr = (val: string) => (val || '').trim();
+
+                    const empId = cleanStr(cRow[empIdIdx] || `emp_${j}`);
+                    const contractType = (cleanStr(cRow[typeIdx]).toLowerCase().includes('full') ? 'Full Time' : 'Out source') as any;
+                    const position = cleanStr(cRow[posIdx] || 'Engineer');
+                    const fullName = cleanStr(cRow[fullIdx] || '');
+                    const nickname = cleanStr(cRow[nickIdx] || fullName || '');
+
+                    let animalRaw = cleanStr(cRow[animalIdx]);
+                    let animalType: 'กระทิง' | 'อินทรีย์' | 'หมี' | 'หนู' = 'หมี';
+                    if (animalRaw.includes('กระทิง') || animalRaw.toLowerCase().includes('bull')) animalType = 'กระทิง';
+                    else if (animalRaw.includes('อินทรีย์') || animalRaw.toLowerCase().includes('eagle')) animalType = 'อินทรีย์';
+                    else if (animalRaw.includes('หนู') || animalRaw.toLowerCase().includes('mouse')) animalType = 'หนู';
+                    else animalType = 'หมี';
+
+                    const coachName = cleanStr(cRow[coachIdx] || 'ชาลี');
+                    const topic1 = cleanStr(cRow[t1Idx] || 'ยังไม่กำหนด');
+                    const topic2 = cleanStr(cRow[t2Idx] || 'ยังไม่กำหนด');
+                    const topic3 = cleanStr(cRow[t3Idx] || 'ยังไม่กำหนด');
+                    const evaluationScore = parseInt(cleanStr(cRow[scoreIdx]), 10) || 7;
+                    const progressPercent = parseInt(cleanStr(cRow[progIdx]), 10) || 50;
+                    const totalHours = parseFloat(cleanStr(cRow[totalHoursIdx])) || 6;
+
+                    if (fullName || nickname || empId) {
+                      coachingRecords.push({
+                        id: `coach-sheet-${empId}`,
+                        empId,
+                        contractType,
+                        position,
+                        fullName,
+                        nickname,
+                        animalType,
+                        coachName,
+                        topic1,
+                        topic2,
+                        topic3,
+                        evaluationScore,
+                        progressPercent,
+                        hoursW1: 1, hoursW2: 1, hoursW3: 1, hoursW4: 1, hoursW5: 1, hoursW6: 1,
+                        totalHours
+                      });
+                    }
+                  }
+                }
+                if (coachingRecords.length > 0) break;
+              }
+            }
+          }
+        } catch (e) {
+          console.warn(`Attempt to fetch coaching tab '${tabName}' skipped:`, e);
+        }
+      }
+
       return {
         success: true,
         csiRecords,
-        employees
+        employees,
+        coachingRecords
       };
     } catch (e: any) {
       console.error('Client-side Google Sheet fetch error:', e);
