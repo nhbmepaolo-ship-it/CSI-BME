@@ -1,5 +1,6 @@
-import { Employee, CSIRecord, VoteRecord, ActivityRecord, CardAnnouncementSettings, HappyLifeClub } from '../types';
+import { Employee, CSIRecord, VoteRecord, ActivityRecord, CardAnnouncementSettings, HappyLifeClub, OrgChartConfig } from '../types';
 import { INITIAL_EMPLOYEES, INITIAL_CSI_RECORDS, INITIAL_VOTES, INITIAL_ACTIVITIES } from '../data/initialData';
+import { INITIAL_ORG_CHART } from '../data/initialOrgChart';
 
 const KEYS = {
   EMPLOYEES: 'csi_bme_employees_v2',
@@ -8,10 +9,59 @@ const KEYS = {
   ACTIVITIES: 'csi_bme_activities_v2',
   CURRENT_USER: 'csi_bme_current_user_v2',
   CARD_SETTINGS: 'csi_bme_card_settings_v2',
-  SHEET_ID: 'csi_bme_sheet_id_v2'
+  SHEET_ID: 'csi_bme_sheet_id_v2',
+  ORG_CHART: 'csi_bme_org_chart_v2'
 };
 
 export class StorageService {
+  // Org Chart
+  static getOrgChart(): OrgChartConfig {
+    try {
+      const data = localStorage.getItem(KEYS.ORG_CHART);
+      if (data) {
+        const parsed = JSON.parse(data);
+        if (parsed && Array.isArray(parsed.nodes) && parsed.nodes.length > 0) {
+          return parsed;
+        }
+      }
+    } catch (e) {
+      console.error('Failed to parse org chart from storage:', e);
+    }
+    this.saveOrgChart(INITIAL_ORG_CHART);
+    return INITIAL_ORG_CHART;
+  }
+
+  static saveOrgChart(config: OrgChartConfig): void {
+    try {
+      localStorage.setItem(KEYS.ORG_CHART, JSON.stringify(config));
+    } catch (e) {
+      console.error('Failed to save org chart:', e);
+    }
+  }
+
+  static resetOrgChart(): OrgChartConfig {
+    this.saveOrgChart(INITIAL_ORG_CHART);
+    return INITIAL_ORG_CHART;
+  }
+
+  // Status Overrides Helper
+  static getStatusOverrides(): Record<string, 'active' | 'resigned'> {
+    try {
+      const data = localStorage.getItem('csi_bme_emp_status_overrides_v2');
+      return data ? JSON.parse(data) : {};
+    } catch {
+      return {};
+    }
+  }
+
+  static saveStatusOverrides(overrides: Record<string, 'active' | 'resigned'>): void {
+    try {
+      localStorage.setItem('csi_bme_emp_status_overrides_v2', JSON.stringify(overrides));
+    } catch (e) {
+      console.error('Failed to save status overrides:', e);
+    }
+  }
+
   // Employees
   static getEmployees(): Employee[] {
     const data = localStorage.getItem(KEYS.EMPLOYEES);
@@ -26,6 +76,7 @@ export class StorageService {
       list = INITIAL_EMPLOYEES;
     }
 
+    const statusOverrides = this.getStatusOverrides();
     let hasChanges = false;
     const cleanStr = (s: string) => (s || '').replace(/\s*\(?https?:\/\/[^\s)]+\)?/gi, '').trim();
 
@@ -84,6 +135,13 @@ export class StorageService {
       }
 
       const uUpper = (emp.username || '').trim().toUpperCase();
+      const uKey = (emp.username || emp.id || '').toLowerCase();
+      const finalStatus = statusOverrides[uKey] || emp.status || 'active';
+
+      if (emp.status !== finalStatus) {
+        hasChanges = true;
+      }
+
       let updatedNick = cleanNick || cleanFull;
       let updatedFull = cleanFull || cleanNick;
       let updatedClub: HappyLifeClub = (emp.club as HappyLifeClub) || 'ชมรมเดิน-วิ่ง';
@@ -131,6 +189,7 @@ export class StorageService {
 
       cleanedList.push({
         ...emp,
+        status: finalStatus,
         nickname: updatedNick,
         fullName: updatedFull,
         password: updatedPass,
@@ -176,7 +235,18 @@ export class StorageService {
     const list = this.getEmployees();
     const idx = list.findIndex(e => e.id === id);
     if (idx === -1) return null;
+
     list[idx] = { ...list[idx], ...updates };
+
+    if (updates.status) {
+      const overrides = this.getStatusOverrides();
+      const uKey = (list[idx].username || list[idx].id || '').toLowerCase();
+      if (uKey) {
+        overrides[uKey] = updates.status;
+        this.saveStatusOverrides(overrides);
+      }
+    }
+
     this.saveEmployees(list);
     return list[idx];
   }
@@ -576,11 +646,29 @@ export class StorageService {
             };
           });
 
+        const statusOverrides = this.getStatusOverrides();
         const existingEmp = this.getEmployees();
         const empMap = new Map<string, Employee>();
 
-        // Put fetched employees into map
-        cleanFetched.forEach(f => empMap.set(f.username.toLowerCase(), f));
+        // Put existing employees into map first
+        existingEmp.forEach(e => {
+          if (e.username) empMap.set(e.username.toLowerCase(), e);
+        });
+
+        // Merge fetched employees into map while preserving local status overrides & resigned status
+        cleanFetched.forEach(f => {
+          const uKey = f.username.toLowerCase();
+          const existing = empMap.get(uKey);
+          const overrideStatus = statusOverrides[uKey];
+          const finalStatus = overrideStatus || existing?.status || f.status || 'active';
+
+          empMap.set(uKey, {
+            ...f,
+            status: finalStatus,
+            club: existing?.club || f.club,
+            password: existing?.password || f.password
+          });
+        });
 
         // Ensure admin flags and default credentials if missing
         ['563770', 'MGR_BME', 'SPV_BME'].forEach(code => {

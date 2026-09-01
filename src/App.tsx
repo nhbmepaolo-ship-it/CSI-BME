@@ -9,6 +9,7 @@ import { ActivityLogForm } from './components/ActivityLogForm';
 import { ActivityDashboard } from './components/ActivityDashboard';
 import { StaffManagement } from './components/StaffManagement';
 import { NotificationCard } from './components/NotificationCard';
+import { OrgChart } from './components/OrgChart';
 
 type PageView = 
   | 'csi-form' 
@@ -17,7 +18,8 @@ type PageView =
   | 'act-log' 
   | 'act-dash' 
   | 'staff-mgr' 
-  | 'card-notify';
+  | 'card-notify'
+  | 'org-chart';
 
 export default function App() {
   const [activePage, setActivePage] = useState<PageView>('csi-form');
@@ -138,7 +140,8 @@ export default function App() {
     'act-log': { title: 'บันทึกกิจกรรมพนักงาน', sub: 'Happy Life & HR-PTP Activity Logger' },
     'act-dash': { title: 'แดชบอร์ดชั่วโมงกิจกรรม', sub: 'Activity Hours Leaderboard & Stats' },
     'staff-mgr': { title: 'จัดการพนักงาน & ชมรม', sub: 'Admin Employee & Club Management' },
-    'card-notify': { title: 'การ์ดประกาศ Line / Telegram', sub: 'Weekly CSI & Activity Hours Card Summary' }
+    'card-notify': { title: 'การ์ดประกาศ Line / Telegram', sub: 'Weekly CSI & Activity Hours Card Summary' },
+    'org-chart': { title: 'ผังองค์กร BME PTP', sub: 'Organizational Chart & Management Systems' }
   };
 
   return (
@@ -285,6 +288,20 @@ export default function App() {
             </div>
             <span>การ์ด Line / Telegram</span>
           </button>
+
+          <button
+            onClick={() => { setActivePage('org-chart'); setSidebarOpen(false); }}
+            className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl font-th text-xs font-bold transition-all ${
+              activePage === 'org-chart'
+                ? 'bg-sky-500/25 text-sky-200 border border-sky-400/40 shadow-lg shadow-sky-500/10 backdrop-blur-md'
+                : 'text-slate-300/80 hover:bg-white/10 hover:text-white border border-transparent'
+            }`}
+          >
+            <div className="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center text-sky-300">
+              <i className="fa-solid fa-sitemap"></i>
+            </div>
+            <span>ผังองค์กร BME PTP</span>
+          </button>
         </nav>
 
         {/* Sidebar Footer User Info */}
@@ -367,6 +384,15 @@ export default function App() {
             >
               <i className="fa-solid fa-person-running"></i>
             </button>
+            <button
+              onClick={() => setActivePage('org-chart')}
+              title="ผังองค์กร BME PTP"
+              className={`p-2 rounded-xl text-xs font-bold border transition-all ${
+                activePage === 'org-chart' ? 'bg-sky-500/40 text-white border-sky-400/50 shadow-md' : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/15 hover:text-white'
+              }`}
+            >
+              <i className="fa-solid fa-sitemap"></i>
+            </button>
           </div>
         </header>
 
@@ -411,6 +437,10 @@ export default function App() {
 
           {activePage === 'card-notify' && (
             <NotificationCard key={syncVersion} currentUser={currentUser} showToast={showToast} />
+          )}
+
+          {activePage === 'org-chart' && (
+            <OrgChart key={syncVersion} currentUser={currentUser} showToast={showToast} />
           )}
         </div>
       </main>

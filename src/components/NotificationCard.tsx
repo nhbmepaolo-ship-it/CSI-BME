@@ -184,6 +184,28 @@ export const NotificationCard: React.FC<NotificationCardProps> = ({ currentUser,
     return card;
   }, [monthLabel, uniqueDeptCount, isCsiComplete, top3BmeStaff, activityHoursSummary]);
 
+  // Short Emoji Summary Card (Under 300 chars, rich with emojis, guaranteed to avoid LINE share HTTP 400 error)
+  const generatedEmojiShortText = useMemo(() => {
+    let card = `📢 สรุปผลงาน CSI & BME PTP\n`;
+    card += `🗓️ รอบเดือน: ${monthLabel}\n`;
+    card += `🎯 ความคืบหน้า CSI: ${uniqueDeptCount}/20 แผนก ${isCsiComplete ? '🎉 (บรรลุเป้าหมายแล้ว!)' : '⏳ (กำลังสะสม)'}\n`;
+
+    if (top3BmeStaff.length > 0) {
+      const top1 = top3BmeStaff[0];
+      card += `🏆 Top 1 CSI: 🥇 ${top1.name} (ประเมิน ${top1.count} ครั้ง | ⭐ ${top1.avgRating}/5)\n`;
+    }
+
+    if (activityHoursSummary.length > 0) {
+      const topAct = activityHoursSummary[0];
+      const h = Math.floor(topAct.totalMins / 60);
+      const m = topAct.totalMins % 60;
+      card += `🏃‍♂️ Top กิจกรรม: 🥇 ${topAct.nickname || topAct.name} (${h} ชม. ${m} นาที)\n`;
+    }
+
+    card += `💙 Biomedical Engineering (BME PTP)`;
+    return card;
+  }, [monthLabel, uniqueDeptCount, isCsiComplete, top3BmeStaff, activityHoursSummary]);
+
   // Generate official LINE Flex Message JSON structure (Matching Image 2 format)
   const generatedFlexJson = useMemo(() => {
     const thaiDateToday = new Date().toLocaleDateString('th-TH', {
@@ -426,12 +448,11 @@ export const NotificationCard: React.FC<NotificationCardProps> = ({ currentUser,
   };
 
   const handleShareToLineApp = () => {
-    // LINE social share links (social-plugins.line.me) fail with HTTP 400 if text parameter is too long (> 500 chars)
-    const textToShare = generatedCardText.length > 500
-      ? generatedCardText.substring(0, 480) + '...\n\n(อ่านรายละเอียดฉบับเต็มเพิ่มเติมได้ในระบบ)'
-      : generatedCardText;
+    // LINE URL Scheme fails with HTTP 400 if text parameter is too long (> 500 chars).
+    // Automatically switch to compact emoji-rich summary card when length exceeds 500 characters.
+    const textToShare = generatedCardText.length > 500 ? generatedEmojiShortText : generatedCardText;
     const encodedText = encodeURIComponent(textToShare);
-    const lineUrl = `https://line.me/R/share?text=${encodedText}`;
+    const lineUrl = `https://line.me/R/msg/text/?${encodedText}`;
     window.open(lineUrl, '_blank');
   };
 

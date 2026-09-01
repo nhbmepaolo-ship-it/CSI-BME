@@ -9,6 +9,30 @@ async function startServer() {
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+  // API Image Proxy Route to avoid CORS issues when exporting PDF/canvas
+  app.get('/api/image-proxy', async (req, res) => {
+    try {
+      const imageUrl = req.query.url as string;
+      if (!imageUrl || !imageUrl.startsWith('http')) {
+        return res.status(400).send('Invalid image URL');
+      }
+      const response = await fetch(imageUrl, { redirect: 'follow' });
+      if (!response.ok) {
+        return res.status(400).send('Failed to fetch image');
+      }
+      const contentType = response.headers.get('content-type') || 'image/png';
+      const arrayBuffer = await response.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+      return res.send(buffer);
+    } catch (err: any) {
+      return res.status(500).send(`Image proxy error: ${err.message}`);
+    }
+  });
+
   // API Route to Auto-Pull Data from Google Sheet ID directly
   app.get('/api/fetch-sheet-data', async (req, res) => {
     try {

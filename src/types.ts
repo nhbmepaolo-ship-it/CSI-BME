@@ -81,3 +81,31 @@ export interface CardAnnouncementSettings {
   telegramBotToken?: string;
   telegramChatId?: string;
 }
+
+export type OrgBadgeLevel = 'Manager' | 'Supervisor' | 'Senior Staff' | 'Junior Staff' | 'Staff' | 'Custom';
+
+export interface OrgTag {
+  id: string;
+  text: string;
+  color?: 'blue' | 'purple' | 'orange' | 'green' | 'cyan' | 'indigo' | 'amber';
+}
+
+export interface OrgNode {
+  id: string;
+  employeeId?: string;
+  fullName: string;
+  nickname?: string;
+  roleTitle: string; // e.g. Manager, Supervisor, Senior Staff, Admin
+  photoUrl?: string;
+  badgeLevel?: OrgBadgeLevel;
+  tags?: OrgTag[];
+  systems?: number[]; // System badges e.g. [2, 5], [6, 7]
+  branchId: 'manager' | 'supervisor' | 'ucc' | 'center' | 'uqc' | string;
+  order: number;
+}
+
+export interface OrgChartConfig {
+  title: string;
+  subtitle: string;
+  nodes: OrgNode[];
+}
