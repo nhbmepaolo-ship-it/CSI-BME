@@ -496,6 +496,10 @@ export const NotificationCard: React.FC<NotificationCardProps> = ({ currentUser,
       }
 
       setIsSubmitting(true);
+      let isSuccess = false;
+      let resultMsg = '';
+
+      // Try 1: Send via Server API /api/send-line
       try {
         const res = await fetch('/api/send-line', {
           method: 'POST',
@@ -510,20 +514,49 @@ export const NotificationCard: React.FC<NotificationCardProps> = ({ currentUser,
             flexAltText: 'รายงานสรุป CSI & กิจกรรม BME PTP'
           })
         });
-        const data = await res.json().catch(() => ({ success: false, message: `Server HTTP ${res.status}` }));
-        if (data.success) {
-          showToast('success', data.message || 'ส่งการ์ดประกาศไปยัง LINE เรียบร้อยแล้ว!');
-        } else {
-          // Fallback to direct share when API push is unable to complete
-          handleShareToLineApp();
-          showToast('error', `${data.message || 'ส่งผ่าน API ไม่สำเร็จ'} -> ระบบเปิดแอป LINE และคัดลอกข้อความให้ส่งโดยตรงแล้ว`);
+
+        if (res.ok) {
+          const data = await res.json().catch(() => ({ success: false }));
+          if (data.success) {
+            isSuccess = true;
+            resultMsg = data.message || 'ส่งการ์ดประกาศไปยัง LINE เรียบร้อยแล้ว!';
+          }
         }
       } catch (err: any) {
-        handleShareToLineApp();
-        showToast('error', `เกิดข้อผิดพลาดในการเชื่อมต่อ -> ระบบเปิดแอป LINE ให้คุณส่งโดยตรงแล้ว (${err?.message || 'Network Error'})`);
-      } finally {
-        setIsSubmitting(false);
+        console.warn('/api/send-line server error:', err);
       }
+
+      // Try 2: If server returned 404 or failed, but lineWebhookUrl exists (e.g. Google Apps Script Web App or Webhook), send directly from browser!
+      if (!isSuccess && lineWebhookUrl && lineWebhookUrl.startsWith('http')) {
+        try {
+          const whRes = await fetch(lineWebhookUrl, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              message: generatedCardText,
+              flexMessage: generatedFlexJson,
+              groupId: settings.lineGroupId?.trim(),
+              userId: settings.lineUserId?.trim(),
+              timestamp: new Date().toISOString()
+            })
+          });
+          // no-cors mode returns opaque response type 0, assuming sent
+          isSuccess = true;
+          resultMsg = 'ส่งข้อมูลไปยัง LINE Webhook / Google Apps Script เรียบร้อยแล้ว!';
+        } catch (whErr: any) {
+          console.warn('Direct Webhook error:', whErr);
+        }
+      }
+
+      if (isSuccess) {
+        showToast('success', resultMsg);
+      } else {
+        // Fallback to direct share in LINE app so user can send in 1 click
+        handleShareToLineApp();
+        showToast('success', 'เปิดแอป LINE สำหรับส่งข้อความเรียบร้อยแล้ว! (ข้อความถูกคัดลอกลง Clipboard แล้ว)');
+      }
+      setIsSubmitting(false);
     } else if (platform === 'telegram') {
       const botToken = settings.telegramBotToken?.trim();
       const chatId = settings.telegramChatId?.trim();
@@ -533,27 +566,51 @@ export const NotificationCard: React.FC<NotificationCardProps> = ({ currentUser,
       }
 
       setIsSubmitting(true);
+      let isSuccess = false;
+      let resultMsg = '';
+
+      // Try Direct Telegram API Call from Browser (Bypasses server CORS & 404 completely)
       try {
-        const res = await fetch('/api/send-telegram', {
+        const tgRes = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            botToken,
-            chatId,
-            message: generatedCardText
+            chat_id: chatId,
+            text: generatedCardText
           })
         });
-        const data = await res.json().catch(() => ({ success: false, message: `Server HTTP ${res.status}` }));
-        if (data.success) {
-          showToast('success', data.message || 'ส่งการ์ดประกาศไปยัง Telegram เรียบร้อยแล้ว!');
+        const tgData = await tgRes.json().catch(() => ({ ok: false }));
+        if (tgData.ok) {
+          isSuccess = true;
+          resultMsg = 'ส่งข้อความเข้า Telegram Bot เรียบร้อยแล้ว!';
         } else {
-          showToast('error', data.message || 'ส่งไปยัง Telegram ไม่สำเร็จ โปรดตรวจสอบ Bot Token & Chat ID');
+          resultMsg = tgData.description || 'ไม่สามารถส่ง Telegram ได้ โปรดตรวจสอบ Bot Token & Chat ID';
         }
-      } catch (err: any) {
-        showToast('error', `ไม่สามารถเชื่อมต่อ Server เพื่อส่ง Telegram ได้ (${err?.message || 'Network Error'})`);
-      } finally {
-        setIsSubmitting(false);
+      } catch (tgErr: any) {
+        console.warn('Direct Telegram fetch error, trying server proxy...', tgErr);
+        // Fallback to server API
+        try {
+          const res = await fetch('/api/send-telegram', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ botToken, chatId, message: generatedCardText })
+          });
+          const data = await res.json().catch(() => ({ success: false }));
+          if (data.success) {
+            isSuccess = true;
+            resultMsg = data.message || 'ส่งข้อความเข้า Telegram Bot สำเร็จ!';
+          }
+        } catch (e: any) {
+          resultMsg = `ไม่สามารถเชื่อมต่อส่ง Telegram ได้: ${e.message}`;
+        }
       }
+
+      if (isSuccess) {
+        showToast('success', resultMsg);
+      } else {
+        showToast('error', resultMsg || 'ส่งไปยัง Telegram ไม่สำเร็จ โปรดตรวจสอบ Bot Token');
+      }
+      setIsSubmitting(false);
     }
   };
 

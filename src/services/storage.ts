@@ -1,6 +1,7 @@
-import { Employee, CSIRecord, VoteRecord, ActivityRecord, CardAnnouncementSettings, HappyLifeClub, OrgChartConfig } from '../types';
+import { Employee, CSIRecord, VoteRecord, ActivityRecord, CardAnnouncementSettings, HappyLifeClub, OrgChartConfig, CoachingRecord } from '../types';
 import { INITIAL_EMPLOYEES, INITIAL_CSI_RECORDS, INITIAL_VOTES, INITIAL_ACTIVITIES } from '../data/initialData';
 import { INITIAL_ORG_CHART } from '../data/initialOrgChart';
+import { INITIAL_COACHING_RECORDS } from '../data/initialCoachingData';
 
 const KEYS = {
   EMPLOYEES: 'csi_bme_employees_v2',
@@ -10,7 +11,8 @@ const KEYS = {
   CURRENT_USER: 'csi_bme_current_user_v2',
   CARD_SETTINGS: 'csi_bme_card_settings_v2',
   SHEET_ID: 'csi_bme_sheet_id_v2',
-  ORG_CHART: 'csi_bme_org_chart_v2'
+  ORG_CHART: 'csi_bme_org_chart_v2',
+  COACHING: 'csi_bme_coaching_records_v2'
 };
 
 export class StorageService {
@@ -42,6 +44,56 @@ export class StorageService {
   static resetOrgChart(): OrgChartConfig {
     this.saveOrgChart(INITIAL_ORG_CHART);
     return INITIAL_ORG_CHART;
+  }
+
+  // Coaching Records
+  static getCoachingRecords(): CoachingRecord[] {
+    try {
+      const data = localStorage.getItem(KEYS.COACHING);
+      if (data) {
+        const parsed = JSON.parse(data);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    } catch (e) {
+      console.error('Failed to parse coaching records from storage:', e);
+    }
+    this.saveCoachingRecords(INITIAL_COACHING_RECORDS);
+    return INITIAL_COACHING_RECORDS;
+  }
+
+  static saveCoachingRecords(records: CoachingRecord[]): void {
+    try {
+      localStorage.setItem(KEYS.COACHING, JSON.stringify(records));
+    } catch (e) {
+      console.error('Failed to save coaching records:', e);
+    }
+  }
+
+  static updateCoachingRecord(id: string, updates: Partial<CoachingRecord>): CoachingRecord[] {
+    const list = this.getCoachingRecords();
+    const idx = list.findIndex(r => r.id === id || r.empId === id);
+    if (idx !== -1) {
+      const updated = { ...list[idx], ...updates };
+      // Recalculate total hours if any weekly hours updated
+      const w1 = updated.hoursW1 || 0;
+      const w2 = updated.hoursW2 || 0;
+      const w3 = updated.hoursW3 || 0;
+      const w4 = updated.hoursW4 || 0;
+      const w5 = updated.hoursW5 || 0;
+      const w6 = updated.hoursW6 || 0;
+      updated.totalHours = Number((w1 + w2 + w3 + w4 + w5 + w6).toFixed(1));
+
+      list[idx] = updated;
+      this.saveCoachingRecords(list);
+    }
+    return list;
+  }
+
+  static resetCoachingRecords(): CoachingRecord[] {
+    this.saveCoachingRecords(INITIAL_COACHING_RECORDS);
+    return INITIAL_COACHING_RECORDS;
   }
 
   // Status Overrides Helper

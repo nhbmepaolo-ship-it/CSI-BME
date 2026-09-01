@@ -10,6 +10,7 @@ import { ActivityDashboard } from './components/ActivityDashboard';
 import { StaffManagement } from './components/StaffManagement';
 import { NotificationCard } from './components/NotificationCard';
 import { OrgChart } from './components/OrgChart';
+import { CoachingDashboard } from './components/CoachingDashboard';
 
 type PageView = 
   | 'csi-form' 
@@ -17,6 +18,7 @@ type PageView =
   | 'vote' 
   | 'act-log' 
   | 'act-dash' 
+  | 'coaching'
   | 'staff-mgr' 
   | 'card-notify'
   | 'org-chart';
@@ -139,6 +141,7 @@ export default function App() {
     'vote': { title: 'โหวตพนักงานในดวงใจ', sub: 'BME Star Vote' },
     'act-log': { title: 'บันทึกกิจกรรมพนักงาน', sub: 'Happy Life & HR-PTP Activity Logger' },
     'act-dash': { title: 'แดชบอร์ดชั่วโมงกิจกรรม', sub: 'Activity Hours Leaderboard & Stats' },
+    'coaching': { title: 'แผนพัฒนา & Coaching พนักงาน', sub: 'DISC 4 Animals & Individual Coaching Plan (1, 2, 3 Topics)' },
     'staff-mgr': { title: 'จัดการพนักงาน & ชมรม', sub: 'Admin Employee & Club Management' },
     'card-notify': { title: 'การ์ดประกาศ Line / Telegram', sub: 'Weekly CSI & Activity Hours Card Summary' },
     'org-chart': { title: 'ผังองค์กร BME PTP', sub: 'Organizational Chart & Management Systems' }
@@ -302,6 +305,20 @@ export default function App() {
             </div>
             <span>ผังองค์กร BME PTP</span>
           </button>
+
+          <button
+            onClick={() => { setActivePage('coaching'); setSidebarOpen(false); }}
+            className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl font-th text-xs font-bold transition-all ${
+              activePage === 'coaching'
+                ? 'bg-amber-500/25 text-amber-200 border border-amber-400/40 shadow-lg shadow-amber-500/10 backdrop-blur-md'
+                : 'text-slate-300/80 hover:bg-white/10 hover:text-white border border-transparent'
+            }`}
+          >
+            <div className="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center text-amber-300">
+              <i className="fa-solid fa-graduation-cap"></i>
+            </div>
+            <span>แผนพัฒนา & Coaching</span>
+          </button>
         </nav>
 
         {/* Sidebar Footer User Info */}
@@ -393,6 +410,15 @@ export default function App() {
             >
               <i className="fa-solid fa-sitemap"></i>
             </button>
+            <button
+              onClick={() => setActivePage('coaching')}
+              title="แผนพัฒนา & Coaching"
+              className={`p-2 rounded-xl text-xs font-bold border transition-all ${
+                activePage === 'coaching' ? 'bg-amber-500/40 text-white border-amber-400/50 shadow-md' : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/15 hover:text-white'
+              }`}
+            >
+              <i className="fa-solid fa-graduation-cap"></i>
+            </button>
           </div>
         </header>
 
@@ -429,6 +455,10 @@ export default function App() {
 
           {activePage === 'act-dash' && (
             <ActivityDashboard key={syncVersion} currentUser={currentUser} />
+          )}
+
+          {activePage === 'coaching' && (
+            <CoachingDashboard key={syncVersion} currentUser={currentUser} showToast={showToast} />
           )}
 
           {activePage === 'staff-mgr' && (

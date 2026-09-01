@@ -82,6 +82,31 @@ export interface CardAnnouncementSettings {
   telegramChatId?: string;
 }
 
+export type AnimalDISCType = 'กระทิง' | 'อินทรีย์' | 'หมี' | 'หนู';
+
+export interface CoachingRecord {
+  id: string;
+  empId: string;           // e.g. '761080', '569492', '563770'
+  contractType: 'Full Time' | 'Out source';
+  position: string;        // Manager, Supervisor, Engineer, Admin
+  fullName: string;
+  nickname: string;
+  animalType: AnimalDISCType;
+  coachName: string;       // e.g. 'ยงยุทธ', 'ชาลี'
+  topic1: string;          // เรื่องที่ Coaching ลำดับที่ 1
+  topic2: string;          // เรื่องที่ Coaching ลำดับที่ 2
+  topic3: string;          // เรื่องที่ Coaching ลำดับที่ 3
+  evaluationScore?: number;// คะแนนประเมินการพัฒนา (1-10)
+  progressPercent?: number;// ความก้าวหน้า (0-100%)
+  hoursW1?: number;
+  hoursW2?: number;
+  hoursW3?: number;
+  hoursW4?: number;
+  hoursW5?: number;
+  hoursW6?: number;
+  totalHours?: number;
+}
+
 export type OrgBadgeLevel = 'Manager' | 'Supervisor' | 'Senior Staff' | 'Junior Staff' | 'Staff' | 'Custom';
 
 export interface OrgTag {
