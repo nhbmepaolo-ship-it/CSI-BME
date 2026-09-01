@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { CoachingRecord, AnimalDISCType, Employee } from '../types';
 import { StorageService } from '../services/storage';
 import { COACHING_TOPIC_CATALOG } from '../data/initialCoachingData';
+import { isAuthorizedAdminUser } from '../data/initialData';
 
 interface CoachingDashboardProps {
   key?: React.Key;
@@ -21,13 +22,18 @@ export function CoachingDashboard({ currentUser, showToast }: CoachingDashboardP
   const [editingRecord, setEditingRecord] = useState<CoachingRecord | null>(null);
   const [editForm, setEditForm] = useState<Partial<CoachingRecord>>({});
 
-  // Auth permissions
+  // Auth permissions: Only 3 canonical admin users (MGR_BME, SPV_BME, 563770 or isAdmin) can edit/score
   const canEditCoaching = useMemo(() => {
-    if (!currentUser) return false;
-    const u = (currentUser.username || '').toUpperCase();
-    const isMgrOrSpv = u === 'MGR_BME' || u === 'SPV_BME' || u === '563770' || currentUser.isAdmin;
-    return isMgrOrSpv;
+    return isAuthorizedAdminUser(currentUser);
   }, [currentUser]);
+
+  // Catalog topic suggestions based on editForm animalDISCType
+  const catalogTopicSuggestions = useMemo(() => {
+    const animal = (editForm.animalType || 'หมี') as AnimalDISCType;
+    const animalTopics = COACHING_TOPIC_CATALOG[animal] || [];
+    const leaderTopics = COACHING_TOPIC_CATALOG['Leader'] || [];
+    return Array.from(new Set([...animalTopics, ...leaderTopics]));
+  }, [editForm.animalType]);
 
   useEffect(() => {
     loadRecords();
@@ -178,6 +184,21 @@ export function CoachingDashboard({ currentUser, showToast }: CoachingDashboardP
               }`}>
                 15 พนักงาน BME
               </span>
+              {canEditCoaching ? (
+                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                  isLight ? 'bg-purple-100 text-purple-800 border border-purple-300' : 'bg-purple-500/30 text-purple-200 border border-purple-400/40'
+                }`}>
+                  <i className="fa-solid fa-shield-halved mr-1 text-purple-600"></i>
+                  สิทธิ์แอดมิน (ประเมิน/ให้คะแนนได้ 3 ท่าน: MGR, SPV, 563770)
+                </span>
+              ) : (
+                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                  isLight ? 'bg-amber-100 text-amber-800 border border-amber-300' : 'bg-amber-500/20 text-amber-200 border border-amber-400/40'
+                }`}>
+                  <i className="fa-solid fa-eye mr-1 text-amber-600"></i>
+                  สิทธิ์ผู้ใช้งานทั่วไป (อ่าน/ดูได้อย่างเดียว)
+                </span>
+              )}
             </div>
             <h2 className={`text-xl sm:text-2xl font-bold flex items-center gap-2.5 ${
               isLight ? 'text-slate-900' : 'text-white'
@@ -839,9 +860,27 @@ export function CoachingDashboard({ currentUser, showToast }: CoachingDashboardP
 
               {/* Topic 1 */}
               <div>
-                <label className="block font-bold mb-1 text-amber-800">🥇 เรื่องที่ Coaching ลำดับที่ 1</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block font-bold text-amber-800">🥇 เรื่องที่ Coaching ลำดับที่ 1</label>
+                  <span className="text-[10px] text-amber-700 font-medium">เลือกจากแคตตาล็อก หรือพิมพ์เอง</span>
+                </div>
+                <select
+                  value={catalogTopicSuggestions.includes(editForm.topic1 || '') ? editForm.topic1 : ''}
+                  onChange={e => {
+                    if (e.target.value) setEditForm({ ...editForm, topic1: e.target.value });
+                  }}
+                  className={`w-full rounded-xl px-3 py-1.5 border text-xs mb-1.5 font-medium ${
+                    isLight ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-slate-900 border-amber-500/30 text-amber-200'
+                  }`}
+                >
+                  <option value="">-- เลือกหัวข้อจากแคตตาล็อก Coaching --</option>
+                  {catalogTopicSuggestions.map((topic, i) => (
+                    <option key={`t1-${i}`} value={topic}>{topic}</option>
+                  ))}
+                </select>
                 <input
                   type="text"
+                  placeholder="หรือพิมพ์หัวข้อเพิ่มเติม..."
                   value={editForm.topic1 || ''}
                   onChange={e => setEditForm({ ...editForm, topic1: e.target.value })}
                   className={`w-full rounded-xl px-3 py-2 border font-medium ${
@@ -852,9 +891,27 @@ export function CoachingDashboard({ currentUser, showToast }: CoachingDashboardP
 
               {/* Topic 2 */}
               <div>
-                <label className="block font-bold mb-1 text-sky-800">🥈 เรื่องที่ Coaching ลำดับที่ 2</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block font-bold text-sky-800">🥈 เรื่องที่ Coaching ลำดับที่ 2</label>
+                  <span className="text-[10px] text-sky-700 font-medium">เลือกจากแคตตาล็อก หรือพิมพ์เอง</span>
+                </div>
+                <select
+                  value={catalogTopicSuggestions.includes(editForm.topic2 || '') ? editForm.topic2 : ''}
+                  onChange={e => {
+                    if (e.target.value) setEditForm({ ...editForm, topic2: e.target.value });
+                  }}
+                  className={`w-full rounded-xl px-3 py-1.5 border text-xs mb-1.5 font-medium ${
+                    isLight ? 'bg-sky-50 border-sky-200 text-sky-900' : 'bg-slate-900 border-sky-500/30 text-sky-200'
+                  }`}
+                >
+                  <option value="">-- เลือกหัวข้อจากแคตตาล็อก Coaching --</option>
+                  {catalogTopicSuggestions.map((topic, i) => (
+                    <option key={`t2-${i}`} value={topic}>{topic}</option>
+                  ))}
+                </select>
                 <input
                   type="text"
+                  placeholder="หรือพิมพ์หัวข้อเพิ่มเติม..."
                   value={editForm.topic2 || ''}
                   onChange={e => setEditForm({ ...editForm, topic2: e.target.value })}
                   className={`w-full rounded-xl px-3 py-2 border font-medium ${
@@ -865,9 +922,27 @@ export function CoachingDashboard({ currentUser, showToast }: CoachingDashboardP
 
               {/* Topic 3 */}
               <div>
-                <label className="block font-bold mb-1 text-emerald-800">🥉 เรื่องที่ Coaching ลำดับที่ 3</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block font-bold text-emerald-800">🥉 เรื่องที่ Coaching ลำดับที่ 3</label>
+                  <span className="text-[10px] text-emerald-700 font-medium">เลือกจากแคตตาล็อก หรือพิมพ์เอง</span>
+                </div>
+                <select
+                  value={catalogTopicSuggestions.includes(editForm.topic3 || '') ? editForm.topic3 : ''}
+                  onChange={e => {
+                    if (e.target.value) setEditForm({ ...editForm, topic3: e.target.value });
+                  }}
+                  className={`w-full rounded-xl px-3 py-1.5 border text-xs mb-1.5 font-medium ${
+                    isLight ? 'bg-emerald-50 border-emerald-200 text-emerald-900' : 'bg-slate-900 border-emerald-500/30 text-emerald-200'
+                  }`}
+                >
+                  <option value="">-- เลือกหัวข้อจากแคตตาล็อก Coaching --</option>
+                  {catalogTopicSuggestions.map((topic, i) => (
+                    <option key={`t3-${i}`} value={topic}>{topic}</option>
+                  ))}
+                </select>
                 <input
                   type="text"
+                  placeholder="หรือพิมพ์หัวข้อเพิ่มเติม..."
                   value={editForm.topic3 || ''}
                   onChange={e => setEditForm({ ...editForm, topic3: e.target.value })}
                   className={`w-full rounded-xl px-3 py-2 border font-medium ${

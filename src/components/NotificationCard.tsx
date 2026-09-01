@@ -515,18 +515,19 @@ export const NotificationCard: React.FC<NotificationCardProps> = ({ currentUser,
           })
         });
 
-        if (res.ok) {
-          const data = await res.json().catch(() => ({ success: false }));
-          if (data.success) {
-            isSuccess = true;
-            resultMsg = data.message || 'ส่งการ์ดประกาศไปยัง LINE เรียบร้อยแล้ว!';
-          }
+        const data = await res.json().catch(() => ({ success: false, message: `HTTP ${res.status}` }));
+        if (res.ok && data.success) {
+          isSuccess = true;
+          resultMsg = data.message || 'ส่งการ์ดประกาศไปยัง LINE เรียบร้อยแล้ว!';
+        } else {
+          resultMsg = data.message || 'ไม่สามารถส่งเข้า LINE ผ่าน API ได้';
         }
       } catch (err: any) {
         console.warn('/api/send-line server error:', err);
+        resultMsg = `เกิดข้อผิดพลาดในการเชื่อมต่อเซิร์ฟเวอร์: ${err.message}`;
       }
 
-      // Try 2: If server returned 404 or failed, but lineWebhookUrl exists (e.g. Google Apps Script Web App or Webhook), send directly from browser!
+      // Try 2: If server returned failure but lineWebhookUrl exists (and isn't rate limited), try direct webhook call from browser
       if (!isSuccess && lineWebhookUrl && lineWebhookUrl.startsWith('http')) {
         try {
           const whRes = await fetch(lineWebhookUrl, {
@@ -543,7 +544,7 @@ export const NotificationCard: React.FC<NotificationCardProps> = ({ currentUser,
           });
           // no-cors mode returns opaque response type 0, assuming sent
           isSuccess = true;
-          resultMsg = 'ส่งข้อมูลไปยัง LINE Webhook / Google Apps Script เรียบร้อยแล้ว!';
+          resultMsg = 'ส่งข้อมูลไปยัง LINE Webhook เรียบร้อยแล้ว!';
         } catch (whErr: any) {
           console.warn('Direct Webhook error:', whErr);
         }
@@ -554,7 +555,7 @@ export const NotificationCard: React.FC<NotificationCardProps> = ({ currentUser,
       } else {
         // Fallback to direct share in LINE app so user can send in 1 click
         handleShareToLineApp();
-        showToast('success', 'เปิดแอป LINE สำหรับส่งข้อความเรียบร้อยแล้ว! (ข้อความถูกคัดลอกลง Clipboard แล้ว)');
+        showToast('error', `ไม่สามารถส่งอัตโนมัติได้ (${resultMsg}) - ระบบได้เปิดแอป LINE และคัดลอกข้อความให้คุณส่งต่อเรียบร้อยแล้ว`);
       }
       setIsSubmitting(false);
     } else if (platform === 'telegram') {

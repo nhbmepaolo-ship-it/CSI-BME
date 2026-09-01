@@ -352,6 +352,31 @@ async function startServer() {
         }
       }
 
+      // 1.5. Fallback: Try LINE Broadcast API if Push failed and channelToken exists
+      if (!isSuccess && channelToken && channelToken.length > 50) {
+        try {
+          const bcRes = await fetch('https://api.line.me/v2/bot/message/broadcast', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${channelToken}`
+            },
+            body: JSON.stringify({
+              messages: pushMessages
+            })
+          });
+          if (bcRes.ok) {
+            isSuccess = true;
+            results.push('ส่งผ่าน LINE Broadcast API สำเร็จ');
+          } else {
+            const errJson: any = await bcRes.json().catch(() => ({}));
+            results.push(`Broadcast API: ${errJson.message || bcRes.statusText}`);
+          }
+        } catch (e: any) {
+          results.push(`Broadcast error: ${e.message}`);
+        }
+      }
+
       // 2. Send via Webhook URL (e.g. webhook.site, n8n, Make, Zapier)
       if (webhookUrl && webhookUrl.startsWith('http')) {
         try {
@@ -382,8 +407,8 @@ async function startServer() {
         }
       }
 
-      // 3. Fallback: Try LINE Notify API if token is short / standard notify token
-      if (!isSuccess && channelToken && channelToken.length < 60) {
+      // 3. Fallback: Try LINE Notify API if token is provided and push/broadcast failed
+      if (!isSuccess && channelToken) {
         try {
           const formBody = new URLSearchParams();
           formBody.append('message', message);

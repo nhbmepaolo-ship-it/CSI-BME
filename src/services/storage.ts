@@ -51,8 +51,14 @@ export class StorageService {
     try {
       const data = localStorage.getItem(KEYS.COACHING);
       if (data) {
-        const parsed = JSON.parse(data);
+        const parsed: CoachingRecord[] = JSON.parse(data);
         if (Array.isArray(parsed) && parsed.length > 0) {
+          // If old default records exist (e.g., Chalee topic1 contains Active Listening), update them to match initial data
+          const charlie = parsed.find(r => r.empId === '761080' || r.fullName.includes('ชาลี'));
+          if (charlie && charlie.topic1.includes('Active Listening')) {
+            this.saveCoachingRecords(INITIAL_COACHING_RECORDS);
+            return INITIAL_COACHING_RECORDS;
+          }
           return parsed;
         }
       }
@@ -587,13 +593,14 @@ export class StorageService {
     const defaultToken = 'wg1swtQ3O2KBtBTa461HHn9gRzygFKVYykKBWUI3F4IPSk7HnbXNz+/3zn05pBnfVYvj3K+rz9FF1Hi+ZUXWShiuf1yEzRdNOVjsp6xOB1cPdhzSSxHQr/VrZYWn1I8HOsD9aP3zs0Npg8DRyfekYwdB04t89/1O/w1cDnyilFU=';
     const defaultGroupId = 'C1f1109f61de6683b2337dfa8d3a5ba4d';
     const defaultUserId = 'Ucbf8c9e32fc2606a570a51bbc595d5e9';
-    const defaultWebhook = 'https://webhook.site/f6b4e22d-2b91-4ac3-93a7-939af98716f3';
+    const defaultWebhook = 'https://script.google.com/macros/s/AKfycby_TunZUkHu_9jTuyl0W8Fa-L0IVJ4_G3rCTrxzPEkZIrxDcNpZwbpMa0ejaIUTZlaX/exec';
 
     if (data) {
       try {
         const parsed = JSON.parse(data);
+        const webhook = (parsed.lineWebhookUrl && !parsed.lineWebhookUrl.includes('webhook.site')) ? parsed.lineWebhookUrl : defaultWebhook;
         return {
-          lineWebhookUrl: parsed.lineWebhookUrl || defaultWebhook,
+          lineWebhookUrl: webhook,
           lineChannelToken: parsed.lineChannelToken || defaultToken,
           lineGroupId: parsed.lineGroupId || defaultGroupId,
           lineUserId: parsed.lineUserId || defaultUserId,
