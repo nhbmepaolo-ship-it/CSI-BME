@@ -343,8 +343,12 @@ async function startServer() {
               results.push(`ส่งผ่าน LINE Messaging API (ID: ${recipient}) สำเร็จ`);
             } else {
               const errJson: any = await pushRes.json().catch(() => ({}));
-              const msg = errJson.message || (pushRes.status === 401 ? 'Authentication failed (Token ไม่ถูกต้อง)' : pushRes.statusText);
-              results.push(`Messaging API Push (${recipient}): ${msg}`);
+              const detailMsgs = Array.isArray(errJson.details)
+                ? errJson.details.map((d: any) => `${d.property || ''} ${d.message || ''}`.trim()).filter(Boolean).join('; ')
+                : '';
+              const baseMsg = errJson.message || (pushRes.status === 401 ? 'Authentication failed (Token ไม่ถูกต้อง)' : pushRes.statusText);
+              const msg = detailMsgs ? `${baseMsg} (${detailMsgs})` : baseMsg;
+              results.push(`Messaging API Push (${recipient}) [HTTP ${pushRes.status}]: ${msg}`);
             }
           } catch (e: any) {
             results.push(`Messaging API error: ${e.message}`);
@@ -450,7 +454,7 @@ async function startServer() {
   // API Proxy Route for Telegram Bot
   app.post('/api/send-telegram', async (req, res) => {
     try {
-      const { botToken, chatId, message } = req.body;
+      const { botToken, chatId, message, parseMode } = req.body;
       if (!botToken || !chatId || !message) {
         return res.status(400).json({ success: false, message: 'กรุณาระบุ Telegram Bot Token, Chat ID และข้อความ' });
       }
@@ -461,7 +465,9 @@ async function startServer() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           chat_id: chatId.trim(),
-          text: message
+          text: message,
+          ...(parseMode ? { parse_mode: parseMode } : {}),
+          disable_web_page_preview: true
         })
       });
 

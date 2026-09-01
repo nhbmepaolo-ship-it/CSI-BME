@@ -206,6 +206,60 @@ export const NotificationCard: React.FC<NotificationCardProps> = ({ currentUser,
     return card;
   }, [monthLabel, uniqueDeptCount, isCsiComplete, top3BmeStaff, activityHoursSummary]);
 
+  // Escape text for Telegram HTML parse_mode (only &, <, > need escaping in HTML mode)
+  const escapeTgHtml = (s: string) => (s || '').toString().replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  // Telegram-specific message: uses <b>/<i> HTML tags (with parse_mode: 'HTML') instead of the
+  // Markdown asterisks used elsewhere, and avoids long unbroken separator lines (━━━/─────) which
+  // cannot word-wrap on a phone screen and were causing the message to overflow horizontally.
+  const generatedTelegramText = useMemo(() => {
+    const thaiDateToday = new Date().toLocaleDateString('th-TH', {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric'
+    });
+
+    const lines: string[] = [];
+    lines.push(`📢 <b>รายงานสรุป CSI &amp; กิจกรรม BME PTP</b>`);
+    lines.push(`📅 ประจำวันที่: ${escapeTgHtml(thaiDateToday)}`);
+    lines.push(`🗓️ รอบเดือน: ${escapeTgHtml(monthLabel)}`);
+    lines.push('');
+    lines.push(`💖 <b>1. สรุปผลประเมิน CSI รายสัปดาห์</b>`);
+    lines.push(`🏥 แผนกที่ร่วมประเมิน (ไม่ซ้ำ): <b>${uniqueDeptCount}/20 แผนก</b>`);
+    lines.push(
+      isCsiComplete
+        ? `🎯 สถานะ: 🎉 <b>บรรลุเป้าหมายแล้ว!</b> (ประเมินครบ 20 แผนก)`
+        : `🎯 สถานะ: ⏳ กำลังสะสม (ขาดอีก ${20 - uniqueDeptCount} แผนก)`
+    );
+    lines.push('');
+    lines.push(`🏆 <b>Top 3 BME ที่ได้รับประเมินสูงสุด</b>`);
+    if (top3BmeStaff.length > 0) {
+      top3BmeStaff.forEach((item, idx) => {
+        const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : '🥉';
+        lines.push(`${medal} ${escapeTgHtml(item.name)} — ⭐ ${item.count} ครั้ง (เฉลี่ย ${item.avgRating}/5)`);
+      });
+    } else {
+      lines.push('💖 ยังไม่มีผลประเมินรายบุคคลในเดือนนี้');
+    }
+    lines.push('');
+    lines.push(`🏃‍♂️ <b>2. สรุปชั่วโมงกิจกรรม Happy Life &amp; HR-PTP</b>`);
+    if (activityHoursSummary.length > 0) {
+      activityHoursSummary.forEach((item, idx) => {
+        const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : '👤';
+        const h = Math.floor(item.totalMins / 60);
+        const m = item.totalMins % 60;
+        lines.push(`${medal} ${escapeTgHtml(item.name)} (${escapeTgHtml(item.nickname)}) — ⏱ ${h} ชม. ${m} นาที · 🏅 ${escapeTgHtml(item.club)}`);
+      });
+    } else {
+      lines.push('🏃‍♀️ ยังไม่มีบันทึกกิจกรรมในเดือนนี้');
+    }
+    lines.push('');
+    lines.push(`💙 <i>Biomedical Engineering (BME PTP)</i>`);
+
+    return lines.join('\n');
+  }, [monthLabel, uniqueDeptCount, isCsiComplete, top3BmeStaff, activityHoursSummary]);
+
   // Generate official LINE Flex Message JSON structure (Matching Image 2 format)
   const generatedFlexJson = useMemo(() => {
     const thaiDateToday = new Date().toLocaleDateString('th-TH', {
@@ -254,8 +308,9 @@ export const NotificationCard: React.FC<NotificationCardProps> = ({ currentUser,
     }
 
     const activityFlexContents: any[] = [];
+    const MAX_FLEX_ACTIVITY_ROWS = 15; // keep the bubble well under LINE's flex message size limit
     if (activityHoursSummary.length > 0) {
-      activityHoursSummary.forEach((item, idx) => {
+      activityHoursSummary.slice(0, MAX_FLEX_ACTIVITY_ROWS).forEach((item, idx) => {
         const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : '👤';
         const h = Math.floor(item.totalMins / 60);
         const m = item.totalMins % 60;
@@ -283,6 +338,15 @@ export const NotificationCard: React.FC<NotificationCardProps> = ({ currentUser,
           ]
         });
       });
+      if (activityHoursSummary.length > MAX_FLEX_ACTIVITY_ROWS) {
+        activityFlexContents.push({
+          type: 'text',
+          text: `…และอีก ${activityHoursSummary.length - MAX_FLEX_ACTIVITY_ROWS} คน (ดูรายละเอียดทั้งหมดที่แดชบอร์ด)`,
+          size: 'xxs',
+          color: '#999999',
+          margin: 'sm'
+        });
+      }
     } else {
       activityFlexContents.push({
         type: 'text',
@@ -498,8 +562,11 @@ export const NotificationCard: React.FC<NotificationCardProps> = ({ currentUser,
       setIsSubmitting(true);
       let isSuccess = false;
       let resultMsg = '';
+      let backendUnreachable = false;
 
       // Try 1: Send via Server API /api/send-line
+      // NOTE: LINE's official Messaging API (api.line.me) does not allow direct browser calls
+      // (no CORS), so this server route is required for the Group/User ID + Channel Token method.
       try {
         const res = await fetch('/api/send-line', {
           method: 'POST',
@@ -515,22 +582,36 @@ export const NotificationCard: React.FC<NotificationCardProps> = ({ currentUser,
           })
         });
 
-        const data = await res.json().catch(() => ({ success: false, message: `HTTP ${res.status}` }));
-        if (res.ok && data.success) {
-          isSuccess = true;
-          resultMsg = data.message || 'ส่งการ์ดประกาศไปยัง LINE เรียบร้อยแล้ว!';
+        const contentType = res.headers.get('content-type') || '';
+        if (res.status === 404 || !contentType.includes('application/json')) {
+          // The hosting environment isn't running the Node/Express backend (server.ts) —
+          // e.g. it's serving only the static build — so /api/* routes don't exist at all.
+          backendUnreachable = true;
+          resultMsg = `ไม่พบเซิร์ฟเวอร์ backend (HTTP ${res.status}) — โฮสต์ปัจจุบันดูเหมือนจะรันเฉพาะไฟล์หน้าเว็บ (static) โดยไม่ได้รัน Node.js server (server.ts) จึงเรียก /api/send-line ไม่ได้เลย`;
         } else {
-          resultMsg = data.message || 'ไม่สามารถส่งเข้า LINE ผ่าน API ได้';
+          const data = await res.json().catch(() => ({ success: false, message: `HTTP ${res.status}` }));
+          if (res.ok && data.success) {
+            isSuccess = true;
+            resultMsg = data.message || 'ส่งการ์ดประกาศไปยัง LINE เรียบร้อยแล้ว!';
+          } else {
+            resultMsg = data.message || `ไม่สามารถส่งเข้า LINE ผ่าน API ได้ (HTTP ${res.status})`;
+          }
         }
       } catch (err: any) {
         console.warn('/api/send-line server error:', err);
+        backendUnreachable = true;
         resultMsg = `เกิดข้อผิดพลาดในการเชื่อมต่อเซิร์ฟเวอร์: ${err.message}`;
       }
 
-      // Try 2: If server returned failure but lineWebhookUrl exists (and isn't rate limited), try direct webhook call from browser
+      // Try 2: If server returned failure but lineWebhookUrl exists, try direct webhook call from browser.
+      // IMPORTANT: this uses mode:'no-cors' so the browser CANNOT read the actual response —
+      // "the request left the browser" is not the same as "LINE actually received it". We no
+      // longer claim success here; we tell the person to verify in the LINE group instead of
+      // showing a false-positive "sent successfully" message.
+      let webhookAttempted = false;
       if (!isSuccess && lineWebhookUrl && lineWebhookUrl.startsWith('http')) {
         try {
-          const whRes = await fetch(lineWebhookUrl, {
+          await fetch(lineWebhookUrl, {
             method: 'POST',
             mode: 'no-cors',
             headers: { 'Content-Type': 'application/json' },
@@ -542,9 +623,7 @@ export const NotificationCard: React.FC<NotificationCardProps> = ({ currentUser,
               timestamp: new Date().toISOString()
             })
           });
-          // no-cors mode returns opaque response type 0, assuming sent
-          isSuccess = true;
-          resultMsg = 'ส่งข้อมูลไปยัง LINE Webhook เรียบร้อยแล้ว!';
+          webhookAttempted = true;
         } catch (whErr: any) {
           console.warn('Direct Webhook error:', whErr);
         }
@@ -552,6 +631,18 @@ export const NotificationCard: React.FC<NotificationCardProps> = ({ currentUser,
 
       if (isSuccess) {
         showToast('success', resultMsg);
+      } else if (webhookAttempted) {
+        showToast(
+          'success',
+          'ส่งคำขอไปยัง LINE Webhook URL ที่ตั้งไว้แล้ว (เบราว์เซอร์ไม่สามารถยืนยันผลลัพธ์จริงจากปลายทางได้) — กรุณาเช็คในกลุ่ม/แชท LINE ว่าข้อความมาถึงจริงหรือไม่ ถ้าไม่มา แปลว่า Webhook URL นี้ยังไม่ได้ตั้งค่าให้ส่งต่อไปยัง LINE จริง'
+        );
+      } else if (backendUnreachable) {
+        // Explain the real, fixable cause instead of a generic error, then fall back to manual share
+        handleShareToLineApp();
+        showToast(
+          'error',
+          `ส่งอัตโนมัติผ่าน Group/User ID ไม่ได้ เพราะวิธีนี้ต้องมีเซิร์ฟเวอร์ backend ทำงานอยู่ (${resultMsg}) — วิธีแก้: ให้แอดมินระบบตรวจสอบว่า deploy โดยรัน "npm start" (Node server) จริง ไม่ใช่แค่วางไฟล์ static เท่านั้น หรือใช้ช่อง "LINE Webhook URL" แทน โดยตั้งเป็น Google Apps Script/Make/n8n ที่ส่งต่อไปยัง LINE เอง ระหว่างนี้ระบบเปิดแอป LINE และคัดลอกข้อความให้แล้ว ส่งต่อได้ทันที`
+        );
       } else {
         // Fallback to direct share in LINE app so user can send in 1 click
         handleShareToLineApp();
@@ -571,19 +662,39 @@ export const NotificationCard: React.FC<NotificationCardProps> = ({ currentUser,
       let resultMsg = '';
 
       // Try Direct Telegram API Call from Browser (Bypasses server CORS & 404 completely)
+      // parse_mode 'HTML' makes the <b>/<i> tags actually render as bold/italic instead of
+      // showing raw markup, and the message itself avoids long unbroken separator lines so
+      // it no longer overflows the screen width on mobile.
       try {
         const tgRes = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             chat_id: chatId,
-            text: generatedCardText
+            text: generatedTelegramText,
+            parse_mode: 'HTML',
+            disable_web_page_preview: true
           })
         });
         const tgData = await tgRes.json().catch(() => ({ ok: false }));
         if (tgData.ok) {
           isSuccess = true;
           resultMsg = 'ส่งข้อความเข้า Telegram Bot เรียบร้อยแล้ว!';
+        } else if (tgData.description && /can't parse entities/i.test(tgData.description)) {
+          // Extremely rare: a name/department contains characters that broke HTML parsing.
+          // Retry once as plain text (no formatting) so the message still gets delivered.
+          const plainRes = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: chatId, text: generatedCardText.replace(/\*/g, '') })
+          });
+          const plainData = await plainRes.json().catch(() => ({ ok: false }));
+          if (plainData.ok) {
+            isSuccess = true;
+            resultMsg = 'ส่งข้อความเข้า Telegram Bot เรียบร้อยแล้ว! (ส่งเป็นข้อความธรรมดา)';
+          } else {
+            resultMsg = plainData.description || tgData.description;
+          }
         } else {
           resultMsg = tgData.description || 'ไม่สามารถส่ง Telegram ได้ โปรดตรวจสอบ Bot Token & Chat ID';
         }
@@ -594,7 +705,7 @@ export const NotificationCard: React.FC<NotificationCardProps> = ({ currentUser,
           const res = await fetch('/api/send-telegram', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ botToken, chatId, message: generatedCardText })
+            body: JSON.stringify({ botToken, chatId, message: generatedTelegramText, parseMode: 'HTML' })
           });
           const data = await res.json().catch(() => ({ success: false }));
           if (data.success) {

@@ -391,7 +391,7 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
               isTopLevel ? 'border-sky-400 ring-4 ring-sky-500/20' : 'border-white/40'
             }`}>
               <img
-                src={getProxiedImageUrl(resolveNodePhoto(node)) || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(node.fullName)}`}
+                src={resolveNodePhoto(node) || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(node.fullName)}`}
                 alt={node.fullName}
                 className="w-full h-full object-cover"
                 onError={e => {

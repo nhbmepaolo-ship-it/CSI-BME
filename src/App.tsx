@@ -85,14 +85,12 @@ export default function App() {
   };
 
   useEffect(() => {
-    // Intentionally do NOT restore any previously logged-in user — every time the app is
-    // opened (reload, new tab, new device) it must start from the default BME PTP identity,
-    // never a "stuck" login session from before.
+    // Intentionally do NOT auto-login with any user (default or previously stored).
+    // Every time the app is opened it starts with NO user selected — pure view-only mode.
+    // The person must explicitly log in (from the Vote or Activity Log page) each time
+    // they want to submit/edit anything.
     StorageService.setCurrentUser(null); // clear any leftover session from earlier versions of the app
-
-    const employees = StorageService.getEmployees();
-    const defaultUser = employees.find(e => e.username === '563770') || employees[0] || null;
-    setCurrentUser(defaultUser);
+    setCurrentUser(null);
 
     // Immediately trigger auto-sync from Google Sheet on app startup
     triggerGlobalSync(true);
@@ -112,11 +110,9 @@ export default function App() {
   };
 
   const handleLogout = () => {
-    // Always fall back to the default BME PTP identity, never a blank/stuck state
-    const employees = StorageService.getEmployees();
-    const defaultUser = employees.find(e => e.username === '563770') || employees[0] || null;
-    setCurrentUser(defaultUser);
-    showToast('success', 'ออกจากระบบเรียบร้อยแล้ว กลับสู่ค่าเริ่มต้น');
+    // Always return to NO user (view-only) — never a default identity
+    setCurrentUser(null);
+    showToast('success', 'ออกจากระบบเรียบร้อยแล้ว (โหมดดูอย่างเดียว)');
   };
 
   const showModal = (type: 'success' | 'warning', title: string, body: string) => {
@@ -321,20 +317,39 @@ export default function App() {
         </nav>
 
         {/* Sidebar Footer User Info */}
-        <div className="p-3.5 border-t border-white/10 bg-slate-950/40 backdrop-blur-md flex items-center gap-3">
-          <img
-            src={currentUser?.img || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(currentUser?.nickname || 'user')}`}
-            alt={currentUser?.nickname}
-            className="w-9 h-9 rounded-xl object-cover border border-white/20 bg-slate-800 flex-shrink-0 shadow-sm"
-            onError={e => {
-              (e.target as HTMLImageElement).src = `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(currentUser?.nickname || 'user')}`;
-            }}
-          />
-          <div className="flex-1 min-w-0">
-            <div className="text-xs font-bold text-slate-100 truncate">{currentUser?.fullName}</div>
-            <div className="text-[10px] text-slate-400 font-mono">User: {currentUser?.username}</div>
+        {currentUser ? (
+          <div className="p-3.5 border-t border-white/10 bg-slate-950/40 backdrop-blur-md flex items-center gap-3">
+            <img
+              src={currentUser.img || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(currentUser.nickname || 'user')}`}
+              alt={currentUser.nickname}
+              className="w-9 h-9 rounded-xl object-cover border border-white/20 bg-slate-800 flex-shrink-0 shadow-sm"
+              onError={e => {
+                (e.target as HTMLImageElement).src = `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(currentUser.nickname || 'user')}`;
+              }}
+            />
+            <div className="flex-1 min-w-0">
+              <div className="text-xs font-bold text-slate-100 truncate">{currentUser.fullName}</div>
+              <div className="text-[10px] text-slate-400 font-mono">User: {currentUser.username}</div>
+            </div>
+            <button
+              onClick={handleLogout}
+              title="ออกจากระบบ"
+              className="w-8 h-8 rounded-lg bg-white/5 hover:bg-rose-500/20 border border-white/10 hover:border-rose-400/40 text-slate-400 hover:text-rose-300 flex items-center justify-center flex-shrink-0 transition-all"
+            >
+              <i className="fa-solid fa-right-from-bracket text-xs"></i>
+            </button>
           </div>
-        </div>
+        ) : (
+          <div className="p-3.5 border-t border-white/10 bg-slate-950/40 backdrop-blur-md flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-slate-500 flex-shrink-0">
+              <i className="fa-solid fa-user-lock text-sm"></i>
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-xs font-bold text-slate-300 truncate">ยังไม่ได้เข้าสู่ระบบ</div>
+              <div className="text-[10px] text-slate-500">โหมดดูอย่างเดียว · เข้าสู่ระบบที่หน้าโหวต/บันทึกกิจกรรม</div>
+            </div>
+          </div>
+        )}
       </aside>
 
       {/* Main Content Area */}
@@ -435,7 +450,7 @@ export default function App() {
             <BMEStarVote
               key={syncVersion}
               currentUser={currentUser}
-              onLogin={user => setCurrentUser(user)}
+              onLogin={handleLogin}
               onLogout={handleLogout}
               showToast={showToast}
             />
