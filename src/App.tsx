@@ -77,6 +77,21 @@ export default function App() {
       } else if (!silent) {
         showToast('error', res.message || 'ซิงค์ข้อมูลไม่สำเร็จ');
       }
+
+      // Pull shared activities/votes/org chart from Google Sheets too, if a GAS Web App
+      // URL has been configured (silently skipped otherwise). This is what makes those
+      // three data types actually shared across devices instead of living only in one
+      // browser's localStorage.
+      try {
+        await Promise.all([
+          StorageService.pullActivitiesFromSheet(),
+          StorageService.pullVotesFromSheet(),
+          StorageService.pullOrgChartFromSheet()
+        ]);
+        setSyncVersion(prev => prev + 1);
+      } catch (e) {
+        console.warn('Shared-data pull (activities/votes/org chart) skipped:', e);
+      }
     } catch {
       if (!silent) showToast('error', 'เกิดข้อผิดพลาดในการเชื่อมต่อ Google Sheet');
     } finally {

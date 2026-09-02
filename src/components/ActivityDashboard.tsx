@@ -18,6 +18,131 @@ import { ActivityRecord, Employee, HappyLifeClub } from '../types';
 import { StorageService } from '../services/storage';
 import { HAPPY_LIFE_CLUBS } from '../data/initialData';
 
+// Google Apps Script Web App — the ONE script that makes activities, votes, and the org
+// chart genuinely shared across every device (instead of living only in each browser's
+// localStorage). Handles both writing (sync_*) and reading (get_*) so the app can push
+// local changes out AND pull in changes made from other devices during periodic sync.
+const GAS_MULTI_ACTION_SCRIPT = `function doPost(e) { return handleRequest(e); }
+function doGet(e) { return handleRequest(e); }
+
+// ทุกอุปกรณ์ที่ตั้งค่า Web App URL นี้ไว้ จะเห็นข้อมูลชุดเดียวกันเสมอ (อ่าน/เขียนชีทเดียวกัน)
+var ACTIVITY_SHEET = "กิจกรรม";
+var ACTIVITY_COLS = ["id","date","timestamp","username","fullName","nickname","club","category","activityName","hours","minutes","totalMinutes","description","deleted"];
+
+var VOTE_SHEET = "โหวต";
+var VOTE_COLS = ["id","timestamp","voter","category","nominee","voteMonth","deleted"];
+
+var ORGCHART_SHEET = "ผังองค์กร";
+
+function handleRequest(e) {
+  try {
+    var ss;
+    try { ss = SpreadsheetApp.getActiveSpreadsheet(); } catch (err) {}
+
+    // หากสร้างสคริปต์ที่ script.google.com (ไม่ได้เปิดจากหน้า Google Sheet) ให้ใส่ ID ของ Sheet
+    if (!ss) {
+      var SPREADSHEET_ID = "ใส่_ID_ของ_GOOGLE_SHEET_ตรงนี้"; // เช่น 1BxiMVs0XR...
+      ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    }
+
+    var contents = e && e.postData ? e.postData.contents : null;
+    var data = contents ? JSON.parse(contents) : (e && e.parameter && e.parameter.data ? JSON.parse(e.parameter.data) : {});
+    var action = data.action || "sync_activities"; // เผื่อกรณีเรียกแบบสคริปต์เวอร์ชันเก่าที่ไม่ส่ง action มา
+
+    switch (action) {
+      case "sync_activities": return upsertRecords(ss, ACTIVITY_SHEET, ACTIVITY_COLS, data.activities || []);
+      case "get_activities": return getRecords(ss, ACTIVITY_SHEET, ACTIVITY_COLS);
+      case "sync_votes": return upsertRecords(ss, VOTE_SHEET, VOTE_COLS, data.votes || []);
+      case "get_votes": return getRecords(ss, VOTE_SHEET, VOTE_COLS);
+      case "sync_orgchart": return saveBlob(ss, ORGCHART_SHEET, data.orgChart);
+      case "get_orgchart": return getBlob(ss, ORGCHART_SHEET);
+      default: return jsonOut({ success: false, message: "ไม่รู้จัก action: " + action });
+    }
+  } catch (err) {
+    return jsonOut({ success: false, message: "เกิดข้อผิดพลาด: " + err.toString() });
+  }
+}
+
+function getOrCreateSheet(ss, name, header) {
+  var sheet = ss.getSheetByName(name);
+  if (!sheet) {
+    sheet = ss.insertSheet(name);
+    sheet.appendRow(header);
+  } else if (sheet.getLastRow() === 0) {
+    sheet.appendRow(header);
+  }
+  return sheet;
+}
+
+// เพิ่มแถวใหม่ หรืออัปเดตแถวเดิมถ้ามี id ซ้ำอยู่แล้ว (กันข้อมูลซ้ำเวลาซิงค์ซ้ำๆ)
+function upsertRecords(ss, sheetName, cols, records) {
+  if (!records || records.length === 0) return jsonOut({ success: true, message: "ไม่มีข้อมูลให้บันทึก" });
+  var sheet = getOrCreateSheet(ss, sheetName, cols);
+  var lastRow = sheet.getLastRow();
+  var existingIds = lastRow > 1 ? sheet.getRange(2, 1, lastRow - 1, 1).getValues().map(function (r) { return String(r[0]); }) : [];
+
+  records.forEach(function (rec) {
+    var rowValues = cols.map(function (c) { return rec[c] !== undefined ? rec[c] : ""; });
+    var idx = existingIds.indexOf(String(rec.id));
+    if (idx === -1) {
+      sheet.appendRow(rowValues);
+      existingIds.push(String(rec.id));
+    } else {
+      sheet.getRange(idx + 2, 1, 1, cols.length).setValues([rowValues]);
+    }
+  });
+
+  return jsonOut({ success: true, message: "ซิงค์ " + records.length + " รายการเรียบร้อยแล้ว" });
+}
+
+function getRecords(ss, sheetName, cols) {
+  var sheet = ss.getSheetByName(sheetName);
+  if (!sheet || sheet.getLastRow() <= 1) return jsonOut({ success: true, data: [] });
+
+  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, cols.length).getValues();
+  var result = rows.map(function (row) {
+    var obj = {};
+    cols.forEach(function (c, i) { obj[c] = row[i]; });
+    return obj;
+  });
+  return jsonOut({ success: true, data: result });
+}
+
+// ผังองค์กรเป็นก้อนข้อมูลเดียว (ไม่ใช่รายการ) เลยเก็บเป็น JSON ในเซลล์เดียว แบบ last-write-wins
+function saveBlob(ss, sheetName, blob) {
+  var sheet = getOrCreateSheet(ss, sheetName, ["key", "value", "updatedAt"]);
+  var lastRow = sheet.getLastRow();
+  var keys = lastRow > 1 ? sheet.getRange(2, 1, lastRow - 1, 1).getValues().map(function (r) { return r[0]; }) : [];
+  var idx = keys.indexOf("config");
+  var rowValues = ["config", JSON.stringify(blob), new Date().toISOString()];
+  if (idx === -1) {
+    sheet.appendRow(rowValues);
+  } else {
+    sheet.getRange(idx + 2, 1, 1, 3).setValues([rowValues]);
+  }
+  return jsonOut({ success: true, message: "บันทึกผังองค์กรเรียบร้อยแล้ว" });
+}
+
+function getBlob(ss, sheetName) {
+  var sheet = ss.getSheetByName(sheetName);
+  if (!sheet || sheet.getLastRow() <= 1) return jsonOut({ success: true, data: null });
+  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 3).getValues();
+  for (var i = 0; i < rows.length; i++) {
+    if (rows[i][0] === "config") {
+      try {
+        return jsonOut({ success: true, data: JSON.parse(rows[i][1]) });
+      } catch (e) {
+        return jsonOut({ success: true, data: null });
+      }
+    }
+  }
+  return jsonOut({ success: true, data: null });
+}
+
+function jsonOut(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+}`;
+
 interface ActivityDashboardProps {
   currentUser: Employee | null;
 }
@@ -25,6 +150,9 @@ interface ActivityDashboardProps {
 export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUser }) => {
   const [activities, setActivities] = useState<ActivityRecord[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [editingActivity, setEditingActivity] = useState<ActivityRecord | null>(null);
+  const [editForm, setEditForm] = useState({ activityName: '', description: '', hours: 0, minutes: 0 });
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
 
   // Filter States
   const [selectedClub, setSelectedClub] = useState<string>('');
@@ -250,6 +378,30 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
       StorageService.deleteActivity(id);
       loadData();
     }
+  };
+
+  const handleOpenEdit = (act: ActivityRecord) => {
+    setEditingActivity(act);
+    setEditForm({
+      activityName: act.activityName,
+      description: act.description || '',
+      hours: act.hours,
+      minutes: act.minutes
+    });
+  };
+
+  const handleSaveEdit = () => {
+    if (!editingActivity) return;
+    setIsSavingEdit(true);
+    StorageService.updateActivity(editingActivity.id, {
+      activityName: editForm.activityName.trim() || editingActivity.activityName,
+      description: editForm.description.trim(),
+      hours: Math.max(0, Number(editForm.hours) || 0),
+      minutes: Math.max(0, Math.min(59, Number(editForm.minutes) || 0))
+    });
+    setIsSavingEdit(false);
+    setEditingActivity(null);
+    loadData();
   };
 
   const formatHoursMinutes = (totalMins: number) => {
@@ -834,7 +986,14 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
                     {act.description || '—'}
                   </td>
                   {currentUser?.isAdmin && (
-                    <td className="p-3 text-right">
+                    <td className="p-3 text-right whitespace-nowrap">
+                      <button
+                        onClick={() => handleOpenEdit(act)}
+                        className="text-sky-400 hover:text-sky-300 p-1 font-bold text-xs mr-2"
+                        title="แก้ไขรายการนี้"
+                      >
+                        <i className="fa-solid fa-pen-to-square"></i>
+                      </button>
                       <button
                         onClick={() => handleDeleteActivity(act.id)}
                         className="text-rose-400 hover:text-rose-300 p-1 font-bold text-xs"
@@ -869,10 +1028,10 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
                 </div>
                 <div>
                   <h3 className="font-th font-extrabold text-lg text-white">
-                    วิธีเชื่อมต่อแอปกับ Google Sheets
+                    วิธีเชื่อมต่อแอปกับ Google Sheets (ฐานข้อมูลกลาง)
                   </h3>
                   <p className="text-xs text-slate-400">
-                    ซิงค์ข้อมูลกิจกรรม หรือคัดลอกลง Google Sheet ที่มีอยู่
+                    ตั้งค่าครั้งเดียว ใช้ได้ทั้งกิจกรรม, โหวตพนักงานในดวงใจ, และผังองค์กร — ข้อมูลจะแชร์ข้ามอุปกรณ์ได้จริงแล้ว
                   </p>
                 </div>
               </div>
@@ -907,7 +1066,7 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
               <div className="flex items-center justify-between flex-wrap gap-2">
                 <div className="font-th font-extrabold text-sm text-teal-300 flex items-center gap-2">
                   <span className="w-6 h-6 rounded-full bg-teal-500 text-slate-950 font-black text-xs flex items-center justify-center">2</span>
-                  <span>วิธีที่ 2: เชื่อมต่ออัตโนมัติผ่าน Google Apps Script Web App</span>
+                  <span>วิธีที่ 2: เชื่อมต่ออัตโนมัติผ่าน Google Apps Script Web App (แนะนำ — ใช้ URL เดียวกับหน้าโหวต/ผังองค์กร)</span>
                 </div>
 
                 {/* Connection Status Badge */}
@@ -1004,44 +1163,7 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
                 </span>
                 <button
                   onClick={() => {
-                    const code = `function doPost(e) { return handleRequest(e); }
-function doGet(e) { return handleRequest(e); }
-
-function handleRequest(e) {
-  try {
-    var ss;
-    try { ss = SpreadsheetApp.getActiveSpreadsheet(); } catch(err) {}
-    
-    // หากสร้างสคริปต์ที่ script.google.com (ไม่ได้เปิดจากหน้า Google Sheet) ให้ใส่ ID ของ Sheet
-    if (!ss) {
-      var SPREADSHEET_ID = "ใส่_ID_ของ_GOOGLE_SHEET_ตรงนี้"; // เช่น 1BxiMVs0XR...
-      ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-    }
-
-    var sheet = ss.getActiveSheet();
-    var contents = e && e.postData ? e.postData.contents : null;
-    var data = null;
-    if (contents) {
-      data = JSON.parse(contents);
-    } else if (e && e.parameter && e.parameter.data) {
-      data = JSON.parse(e.parameter.data);
-    }
-
-    if (data && data.activities && data.activities.length > 0) {
-      if (sheet.getLastRow() === 0) {
-        sheet.appendRow(["วันที่ทำกิจกรรม", "รหัสพนักงาน", "ชื่อผู้บันทึก", "ชื่อเล่น", "ชมรม", "หมวดหมู่", "ชื่อกิจกรรม", "ชั่วโมง", "นาที", "นาทีรวม", "รายละเอียด"]);
-      }
-      data.activities.forEach(function(act) {
-        sheet.appendRow([act.date, act.username, act.fullName, act.nickname, act.club, act.category, act.activityName, act.hours, act.minutes, act.totalMinutes, act.description]);
-      });
-      return ContentService.createTextOutput("SUCCESS").setMimeType(ContentService.MimeType.TEXT);
-    }
-    return ContentService.createTextOutput("NO_DATA").setMimeType(ContentService.MimeType.TEXT);
-  } catch(err) {
-    return ContentService.createTextOutput("ERROR: " + err.toString()).setMimeType(ContentService.MimeType.TEXT);
-  }
-}`;
-                    navigator.clipboard.writeText(code);
+                    navigator.clipboard.writeText(GAS_MULTI_ACTION_SCRIPT);
                     alert('คัดลอกสคริปต์ Apps Script สำเร็จ!');
                   }}
                   className="text-[11px] font-bold text-emerald-300 hover:underline"
@@ -1050,43 +1172,7 @@ function handleRequest(e) {
                 </button>
               </div>
               <pre className="p-3 bg-slate-950 border border-white/10 rounded-xl text-[11px] font-mono text-emerald-300/90 overflow-x-auto max-h-44">
-{`function doPost(e) { return handleRequest(e); }
-function doGet(e) { return handleRequest(e); }
-
-function handleRequest(e) {
-  try {
-    var ss;
-    try { ss = SpreadsheetApp.getActiveSpreadsheet(); } catch(err) {}
-    
-    // หากสร้างสคริปต์แยกจาก script.google.com ให้ระบุ ID ของ Google Sheet
-    if (!ss) {
-      var SPREADSHEET_ID = "ใส่_ID_ของ_GOOGLE_SHEET_ตรงนี้";
-      ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-    }
-
-    var sheet = ss.getActiveSheet();
-    var contents = e && e.postData ? e.postData.contents : null;
-    var data = null;
-    if (contents) {
-      data = JSON.parse(contents);
-    } else if (e && e.parameter && e.parameter.data) {
-      data = JSON.parse(e.parameter.data);
-    }
-
-    if (data && data.activities && data.activities.length > 0) {
-      if (sheet.getLastRow() === 0) {
-        sheet.appendRow(["วันที่ทำกิจกรรม", "รหัสพนักงาน", "ชื่อผู้บันทึก", "ชื่อเล่น", "ชมรม", "หมวดหมู่", "ชื่อกิจกรรม", "ชั่วโมง", "นาที", "นาทีรวม", "รายละเอียด"]);
-      }
-      data.activities.forEach(function(act) {
-        sheet.appendRow([act.date, act.username, act.fullName, act.nickname, act.club, act.category, act.activityName, act.hours, act.minutes, act.totalMinutes, act.description]);
-      });
-      return ContentService.createTextOutput("SUCCESS").setMimeType(ContentService.MimeType.TEXT);
-    }
-    return ContentService.createTextOutput("NO_DATA").setMimeType(ContentService.MimeType.TEXT);
-  } catch(err) {
-    return ContentService.createTextOutput("ERROR: " + err.toString()).setMimeType(ContentService.MimeType.TEXT);
-  }
-}`}
+                {GAS_MULTI_ACTION_SCRIPT}
               </pre>
             </div>
 
@@ -1096,6 +1182,80 @@ function handleRequest(e) {
                 className="px-5 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-th font-bold text-xs border border-white/15"
               >
                 ปิดหน้าต่าง
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Activity Modal — lets an admin correct wrongly-entered hours/details */}
+      {editingActivity && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="glass-panel rounded-2xl w-full max-w-md p-6 space-y-4">
+            <div>
+              <h3 className="text-base font-extrabold text-white">แก้ไขรายการกิจกรรม</h3>
+              <p className="text-xs text-slate-400 mt-1">
+                {editingActivity.fullName} ({editingActivity.nickname}) · {new Date(editingActivity.timestamp).toLocaleDateString('th-TH')}
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-300 mb-1">ชื่อกิจกรรม</label>
+              <input
+                type="text"
+                value={editForm.activityName}
+                onChange={e => setEditForm({ ...editForm, activityName: e.target.value })}
+                className="w-full glass-input rounded-xl px-3 py-2 text-sm text-white"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">ชั่วโมง</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={editForm.hours}
+                  onChange={e => setEditForm({ ...editForm, hours: Number(e.target.value) })}
+                  className="w-full glass-input rounded-xl px-3 py-2 text-sm text-white"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">นาที</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={59}
+                  value={editForm.minutes}
+                  onChange={e => setEditForm({ ...editForm, minutes: Number(e.target.value) })}
+                  className="w-full glass-input rounded-xl px-3 py-2 text-sm text-white"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-300 mb-1">รายละเอียด</label>
+              <textarea
+                value={editForm.description}
+                onChange={e => setEditForm({ ...editForm, description: e.target.value })}
+                rows={3}
+                className="w-full glass-input rounded-xl px-3 py-2 text-sm text-white resize-none"
+              />
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <button
+                onClick={() => setEditingActivity(null)}
+                className="flex-1 px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-th font-bold text-xs border border-white/15"
+              >
+                ยกเลิก
+              </button>
+              <button
+                onClick={handleSaveEdit}
+                disabled={isSavingEdit}
+                className="flex-1 px-4 py-2.5 rounded-xl bg-sky-500 hover:bg-sky-600 text-white font-th font-bold text-xs disabled:opacity-50"
+              >
+                {isSavingEdit ? 'กำลังบันทึก...' : 'บันทึกการแก้ไข'}
               </button>
             </div>
           </div>

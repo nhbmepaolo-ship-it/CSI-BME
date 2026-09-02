@@ -11,6 +11,20 @@ export function createApiApp(): express.Express {
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+  // Wraps fetch with a hard timeout so a single slow/unresponsive request to Google
+  // (e.g. a tab-name guess that doesn't exist) can never hang the whole serverless
+  // function past its execution time limit — this was causing intermittent 500s on
+  // Vercel when many tab-name candidates were tried one after another.
+  const fetchWithTimeout = async (url: string, timeoutMs = 8000): Promise<Response> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, { redirect: 'follow', signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
   // API Image Proxy Route to avoid CORS issues when exporting PDF/canvas
   app.get('/api/image-proxy', async (req, res) => {
     try {
@@ -45,7 +59,7 @@ export function createApiApp(): express.Express {
 
       // Try CSV export URL
       const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`;
-      const response = await fetch(csvUrl, { redirect: 'follow' });
+      const response = await fetchWithTimeout(csvUrl);
 
       if (!response.ok) {
         return res.status(400).json({
@@ -190,92 +204,194 @@ export function createApiApp(): express.Express {
         });
       }
 
-      // Try fetching staff list from multiple possible tab names
+      // Try fetching staff list from multiple possible tab names — fetched IN PARALLEL
+      // (previously sequential, which could take 10+ seconds combined and trip Vercel's
+      // function timeout, producing the intermittent 500 errors seen after deployment)
       const possibleStaffTabs = ['ข้อมูลพนักงาน', 'พนักงาน', 'รายชื่อพนักงาน', 'Employees', 'Staff', 'Sheet2'];
-      const employees = [];
+      let employees: any[] = [];
 
-      for (const tabName of possibleStaffTabs) {
-        try {
-          const staffTabUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(tabName)}`;
-          const staffRes = await fetch(staffTabUrl, { redirect: 'follow' });
-          if (staffRes.ok) {
-            const staffCsv = await staffRes.text();
-            if (staffCsv && !staffCsv.includes('google-signin') && !staffCsv.includes('<!DOCTYPE html>')) {
-              const staffRows = parseCSV(staffCsv);
-              if (staffRows.length > 1) {
-                let fullNameIdx = 0;
-                let nicknameIdx = 1;
-                let imgIdx = 2;
-                let usernameIdx = 3;
-                let passIdx = 4;
+      const staffTabResults = await Promise.allSettled(
+        possibleStaffTabs.map(tabName =>
+          fetchWithTimeout(`https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(tabName)}`)
+            .then(r => (r.ok ? r.text() : Promise.reject(new Error(`HTTP ${r.status}`))))
+        )
+      );
 
-                const header = staffRows[0].map(h => (h || '').trim().toLowerCase());
-                header.forEach((col, idx) => {
-                  if ((col.includes('ชื่อ') && !col.includes('เล่น')) || col.includes('full') || col.includes('name')) fullNameIdx = idx;
-                  if (col.includes('เล่น') || col.includes('nick')) nicknameIdx = idx;
-                  if (col.includes('รูป') || col.includes('img') || col.includes('pic') || col.includes('photo') || col.includes('avatar')) imgIdx = idx;
-                  if (col.includes('user') || col.includes('รหัสพนักงาน') || col.includes('รหัส') || col.includes('id')) usernameIdx = idx;
-                  if (col.includes('pass') || col.includes('รหัสผ่าน')) passIdx = idx;
-                });
+      for (let t = 0; t < staffTabResults.length; t++) {
+        const result = staffTabResults[t];
+        if (result.status !== 'fulfilled') continue;
+        const staffCsv = result.value;
+        if (!staffCsv || staffCsv.includes('google-signin') || staffCsv.includes('<!DOCTYPE html>')) continue;
 
-                for (let j = 1; j < staffRows.length; j++) {
-                  const sRow = staffRows[j];
-                  if (sRow && sRow.length >= 2) {
-                    const cleanStr = (val: string) => (val || '').replace(/\s*\(?https?:\/\/[^\s)]+\)?/gi, '').trim();
+        const staffRows = parseCSV(staffCsv);
+        if (staffRows.length <= 1) continue;
 
-                    const fullName = cleanStr(sRow[fullNameIdx] || '');
-                    const nickname = cleanStr(sRow[nicknameIdx] || fullName || '');
-                    let img = (sRow[imgIdx] || '').trim();
-                    const username = (sRow[usernameIdx] || `emp_${j}`).trim();
-                    const password = (sRow[passIdx] || '123').trim();
+        let fullNameIdx = 0;
+        let nicknameIdx = 1;
+        let imgIdx = 2;
+        let usernameIdx = 3;
+        let passIdx = 4;
 
-                    // Skip team placeholders
-                    const isTeam = fullName.toLowerCase().includes('team') ||
-                      nickname.toLowerCase().includes('team') ||
-                      fullName.includes('ทีม') ||
-                      nickname.includes('ทีม') ||
-                      username.toLowerCase().includes('team');
-                    if (isTeam) continue;
+        const header = staffRows[0].map(h => (h || '').trim().toLowerCase());
+        header.forEach((col, idx) => {
+          if ((col.includes('ชื่อ') && !col.includes('เล่น')) || col.includes('full') || col.includes('name')) fullNameIdx = idx;
+          if (col.includes('เล่น') || col.includes('nick')) nicknameIdx = idx;
+          if (col.includes('รูป') || col.includes('img') || col.includes('pic') || col.includes('photo') || col.includes('avatar')) imgIdx = idx;
+          if (col.includes('user') || col.includes('รหัสพนักงาน') || col.includes('รหัส') || col.includes('id')) usernameIdx = idx;
+          if (col.includes('pass') || col.includes('รหัสผ่าน')) passIdx = idx;
+        });
 
-                    if (img && img.includes('drive.google.com')) {
-                      const m = img.match(/\/d\/([a-zA-Z0-9_-]+)/) || img.match(/id=([a-zA-Z0-9_-]+)/);
-                      if (m && m[1]) {
-                        img = `https://lh3.googleusercontent.com/d/${m[1]}`;
-                      }
-                    }
+        const parsedEmployees: any[] = [];
+        for (let j = 1; j < staffRows.length; j++) {
+          const sRow = staffRows[j];
+          if (sRow && sRow.length >= 2) {
+            const cleanStr = (val: string) => (val || '').replace(/\s*\(?https?:\/\/[^\s)]+\)?/gi, '').trim();
 
-                    if (img && !img.startsWith('http')) {
-                      img = `https://${img}`;
-                    }
+            const fullName = cleanStr(sRow[fullNameIdx] || '');
+            const nickname = cleanStr(sRow[nicknameIdx] || fullName || '');
+            let img = (sRow[imgIdx] || '').trim();
+            const username = (sRow[usernameIdx] || `emp_${j}`).trim();
+            const password = (sRow[passIdx] || '123').trim();
 
-                    if (!img) {
-                      img = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(nickname || fullName || 'user')}&skinColor=f8d25c`;
-                    }
+            // Skip team placeholders
+            const isTeam = fullName.toLowerCase().includes('team') ||
+              nickname.toLowerCase().includes('team') ||
+              fullName.includes('ทีม') ||
+              nickname.includes('ทีม') ||
+              username.toLowerCase().includes('team');
+            if (isTeam) continue;
 
-                    const uUpper = username.toUpperCase();
-                    const isAdmin = uUpper.includes('ADMIN') || uUpper.includes('SPV') || uUpper.includes('MGR') || uUpper === '563770';
-
-                    if (fullName || nickname || username) {
-                      employees.push({
-                        id: `sheet-emp-${username}`,
-                        username,
-                        password,
-                        fullName,
-                        nickname,
-                        club: 'ชมรมเดิน-วิ่ง',
-                        img,
-                        status: 'active',
-                        isAdmin
-                      });
-                    }
-                  }
-                }
-                if (employees.length > 0) break; // Found and parsed staff from this tab
+            if (img && img.includes('drive.google.com')) {
+              const m = img.match(/\/d\/([a-zA-Z0-9_-]+)/) || img.match(/id=([a-zA-Z0-9_-]+)/);
+              if (m && m[1]) {
+                img = `https://lh3.googleusercontent.com/d/${m[1]}`;
               }
             }
+
+            if (img && !img.startsWith('http')) {
+              img = `https://${img}`;
+            }
+
+            if (!img) {
+              img = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(nickname || fullName || 'user')}&skinColor=f8d25c`;
+            }
+
+            const uUpper = username.toUpperCase();
+            const isAdmin = uUpper.includes('ADMIN') || uUpper.includes('SPV') || uUpper.includes('MGR') || uUpper === '563770';
+
+            if (fullName || nickname || username) {
+              parsedEmployees.push({
+                id: `sheet-emp-${username}`,
+                username,
+                password,
+                fullName,
+                nickname,
+                club: 'ชมรมเดิน-วิ่ง',
+                img,
+                status: 'active',
+                isAdmin
+              });
+            }
           }
-        } catch (e) {
-          console.warn(`Server fetch staff from tab '${tabName}' skipped:`, e);
+        }
+        if (parsedEmployees.length > 0) {
+          employees = parsedEmployees;
+          break; // Found and parsed staff from this tab (first match in priority order)
+        }
+      }
+
+      // Try fetching "แผนพัฒนา" (Coaching/IDP) records — also fetched IN PARALLEL.
+      // NOTE: this was previously missing from this route entirely (it only existed in the
+      // browser-side fallback), so coaching data never actually synced while the server was
+      // reachable — that's the root cause of "แผนพัฒนาดึงข้อมูลไม่ตรงกับชีท" reported earlier.
+      const possibleCoachingTabs = ['แผนพัฒนา', 'แผนพัฒนาพนักงาน', 'Coaching', 'IDP', 'Coaching Records', 'แผนพัฒนา & Coaching', 'Sheet3'];
+      let coachingRecords: any[] = [];
+
+      const coachingTabResults = await Promise.allSettled(
+        possibleCoachingTabs.map(tabName =>
+          fetchWithTimeout(`https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(tabName)}`)
+            .then(r => (r.ok ? r.text() : Promise.reject(new Error(`HTTP ${r.status}`))))
+        )
+      );
+
+      for (let t = 0; t < coachingTabResults.length; t++) {
+        const result = coachingTabResults[t];
+        if (result.status !== 'fulfilled') continue;
+        const coachCsv = result.value;
+        if (!coachCsv || coachCsv.includes('google-signin') || coachCsv.includes('<!DOCTYPE html>')) continue;
+
+        const coachRows = parseCSV(coachCsv);
+        if (coachRows.length <= 1) continue;
+
+        let empIdIdx = 0, typeIdx = 1, posIdx = 2, fullIdx = 3, nickIdx = 4, animalIdx = 5, coachIdx = 6, t1Idx = 7, t2Idx = 8, t3Idx = 9, scoreIdx = 10, progIdx = 11, totalHoursIdx = 12;
+
+        const header = coachRows[0].map(h => (h || '').trim().toLowerCase());
+        header.forEach((col, idx) => {
+          if (col.includes('รหัส') || col.includes('id') || col.includes('empid')) empIdIdx = idx;
+          if (col.includes('สัญญา') || col.includes('contract') || col.includes('ประเภทพนักงาน')) typeIdx = idx;
+          if (col.includes('ตำแหน่ง') || col.includes('position') || col.includes('role')) posIdx = idx;
+          if ((col.includes('ชื่อ') && !col.includes('เล่น') && !col.includes('โค้ช')) || col.includes('full') || col.includes('name')) fullIdx = idx;
+          if (col.includes('เล่น') || col.includes('nick')) nickIdx = idx;
+          if (col.includes('สัตว์') || col.includes('disc') || col.includes('animal')) animalIdx = idx;
+          if (col.includes('โค้ช') || col.includes('coach')) coachIdx = idx;
+          if (col.includes('ลำดับที่ 1') || col.includes('เรื่องที่ 1') || col.includes('topic1') || col.includes('topic 1')) t1Idx = idx;
+          if (col.includes('ลำดับที่ 2') || col.includes('เรื่องที่ 2') || col.includes('topic2') || col.includes('topic 2')) t2Idx = idx;
+          if (col.includes('ลำดับที่ 3') || col.includes('เรื่องที่ 3') || col.includes('topic3') || col.includes('topic 3')) t3Idx = idx;
+          if (col.includes('คะแนน') || col.includes('score') || col.includes('eval')) scoreIdx = idx;
+          if (col.includes('ก้าวหน้า') || col.includes('progress') || col.includes('%')) progIdx = idx;
+          if (col.includes('ชั่วโมง') || col.includes('hours') || col.includes('total')) totalHoursIdx = idx;
+        });
+
+        const parsedCoaching: any[] = [];
+        for (let j = 1; j < coachRows.length; j++) {
+          const cRow = coachRows[j];
+          if (cRow && cRow.length >= 3) {
+            const cleanStr = (val: string) => (val || '').trim();
+
+            const empId = cleanStr(cRow[empIdIdx] || `emp_${j}`);
+            const contractType = cleanStr(cRow[typeIdx]).toLowerCase().includes('full') ? 'Full Time' : 'Out source';
+            const position = cleanStr(cRow[posIdx] || 'Engineer');
+            const fullName = cleanStr(cRow[fullIdx] || '');
+            const nickname = cleanStr(cRow[nickIdx] || fullName || '');
+
+            const animalRaw = cleanStr(cRow[animalIdx]);
+            let animalType = 'หมี';
+            if (animalRaw.includes('กระทิง') || animalRaw.toLowerCase().includes('bull')) animalType = 'กระทิง';
+            else if (animalRaw.includes('อินทรีย์') || animalRaw.toLowerCase().includes('eagle')) animalType = 'อินทรีย์';
+            else if (animalRaw.includes('หนู') || animalRaw.toLowerCase().includes('mouse')) animalType = 'หนู';
+
+            const coachName = cleanStr(cRow[coachIdx] || 'ชาลี');
+            const topic1 = cleanStr(cRow[t1Idx] || 'ยังไม่กำหนด');
+            const topic2 = cleanStr(cRow[t2Idx] || 'ยังไม่กำหนด');
+            const topic3 = cleanStr(cRow[t3Idx] || 'ยังไม่กำหนด');
+            const evaluationScore = parseInt(cleanStr(cRow[scoreIdx]), 10) || 7;
+            const progressPercent = parseInt(cleanStr(cRow[progIdx]), 10) || 50;
+            const totalHours = parseFloat(cleanStr(cRow[totalHoursIdx])) || 6;
+
+            if (fullName || nickname || empId) {
+              parsedCoaching.push({
+                id: `coach-sheet-${empId}`,
+                empId,
+                contractType,
+                position,
+                fullName,
+                nickname,
+                animalType,
+                coachName,
+                topic1,
+                topic2,
+                topic3,
+                evaluationScore,
+                progressPercent,
+                hoursW1: 1, hoursW2: 1, hoursW3: 1, hoursW4: 1, hoursW5: 1, hoursW6: 1,
+                totalHours
+              });
+            }
+          }
+        }
+        if (parsedCoaching.length > 0) {
+          coachingRecords = parsedCoaching;
+          break; // Found and parsed coaching data from this tab (first match in priority order)
         }
       }
 
@@ -285,7 +401,8 @@ export function createApiApp(): express.Express {
         sheetName,
         totalFetched: csiRecords.length,
         csiRecords,
-        employees
+        employees,
+        coachingRecords
       });
 
     } catch (err: any) {
@@ -506,7 +623,21 @@ export function createApiApp(): express.Express {
       });
 
       const responseText = await response.text();
-      console.log('Google Apps Script response:', responseText);
+      console.log('Google Apps Script response:', responseText.substring(0, 300));
+
+      // The updated multi-action Apps Script (activities/votes/org chart, read + write)
+      // responds with real JSON — e.g. { success: true, data: [...] } for get_* actions,
+      // or { success: true, message: '...' } for sync_* (write) actions. Prefer that when
+      // present. Fall back to the old plain "SUCCESS" text response for backward
+      // compatibility with anyone still running the original write-only script.
+      try {
+        const parsed = JSON.parse(responseText);
+        if (parsed && typeof parsed === 'object' && 'success' in parsed) {
+          return res.json(parsed);
+        }
+      } catch {
+        // not JSON — fall through to legacy text handling below
+      }
 
       if (responseText.includes('SUCCESS')) {
         return res.json({ success: true, message: 'ซิงค์ข้อมูลลง Google Sheet สำเร็จเรียบร้อยแล้ว!' });

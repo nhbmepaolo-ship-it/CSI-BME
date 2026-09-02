@@ -16,6 +16,32 @@ const KEYS = {
 };
 
 export class StorageService {
+  // Generic caller for the multi-action Google Apps Script Web App (activities, votes,
+  // org chart). Used for BOTH pushing local changes out and pulling shared data in, so
+  // every device connected to the same GAS URL converges on the same data instead of
+  // each browser's localStorage being an island.
+  private static getGasUrl(): string {
+    return (localStorage.getItem('csi_google_sheets_url') || '').trim();
+  }
+
+  private static async callGasAction(action: string, extra: Record<string, any> = {}): Promise<{ success: boolean; data?: any; message?: string }> {
+    const gasUrl = this.getGasUrl();
+    if (!gasUrl) {
+      return { success: false, message: 'ยังไม่ได้ตั้งค่า Google Apps Script Web App URL' };
+    }
+    try {
+      const res = await fetch('/api/sync-sheets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gasUrl, payload: { action, ...extra } })
+      });
+      const data = await res.json().catch(() => ({ success: false, message: `HTTP ${res.status}` }));
+      return data;
+    } catch (err: any) {
+      return { success: false, message: err.message };
+    }
+  }
+
   // Org Chart
   static getOrgChart(): OrgChartConfig {
     try {
@@ -38,6 +64,18 @@ export class StorageService {
       localStorage.setItem(KEYS.ORG_CHART, JSON.stringify(config));
     } catch (e) {
       console.error('Failed to save org chart:', e);
+    }
+    // Push to the shared Google Sheet too (fire-and-forget) so other devices see the
+    // update on their next sync, instead of the org chart only living on this browser.
+    this.callGasAction('sync_orgchart', { orgChart: config });
+  }
+
+  // Pull the shared org chart from Google Sheets (last-write-wins) and store it locally.
+  // Called during the periodic global sync so every device converges on the same chart.
+  static async pullOrgChartFromSheet(): Promise<void> {
+    const result = await this.callGasAction('get_orgchart');
+    if (result.success && result.data && Array.isArray(result.data.nodes) && result.data.nodes.length > 0) {
+      localStorage.setItem(KEYS.ORG_CHART, JSON.stringify(result.data));
     }
   }
 
@@ -424,11 +462,35 @@ export class StorageService {
 
     votes.unshift(newVote);
     this.saveVotes(votes);
+
+    // Push to the shared Google Sheet too (fire-and-forget) so this vote is visible
+    // from other devices too, not just this browser.
+    this.callGasAction('sync_votes', { votes: [newVote] });
+
     return {
       success: true,
       message: `บันทึกผลการโหวตรอบเดือน ${voteMonth} เรียบร้อยแล้ว!`,
       monthKey: voteMonth
     };
+  }
+
+  // Pull votes cast from OTHER devices out of the shared Google Sheet and merge them in
+  // (by id, so nothing is duplicated). Called during the periodic global sync.
+  static async pullVotesFromSheet(): Promise<void> {
+    const result = await this.callGasAction('get_votes');
+    if (!result.success || !Array.isArray(result.data)) return;
+
+    const remoteVotes: VoteRecord[] = result.data;
+    if (remoteVotes.length === 0) return;
+
+    const localVotes = this.getVotes();
+    const byId = new Map<string, VoteRecord>();
+    localVotes.forEach(v => byId.set(v.id, v));
+    remoteVotes.forEach(v => {
+      if (v && v.id) byId.set(v.id, v); // remote is authoritative for matching ids
+    });
+
+    this.saveVotes(Array.from(byId.values()));
   }
 
   // Activity Records
@@ -477,7 +539,9 @@ export class StorageService {
       timestamp: new Date().toISOString(),
       totalRecords: activities.length,
       activities: activities.map(a => ({
+        id: a.id,
         date: new Date(a.timestamp).toLocaleDateString('th-TH'),
+        timestamp: a.timestamp,
         username: a.username,
         fullName: a.fullName,
         nickname: a.nickname,
@@ -487,7 +551,8 @@ export class StorageService {
         hours: a.hours,
         minutes: a.minutes,
         totalMinutes: a.totalMinutes,
-        description: a.description || ''
+        description: a.description || '',
+        deleted: (a as any).deleted || false
       }))
     };
 
@@ -545,8 +610,74 @@ export class StorageService {
   }
 
   static deleteActivity(id: string): void {
-    const list = this.getActivities().filter(a => a.id !== id);
+    const list = this.getActivities();
+    const target = list.find(a => a.id === id);
+    const remaining = list.filter(a => a.id !== id);
+    this.saveActivities(remaining);
+
+    // Push a soft-delete "tombstone" so this deletion also removes the record on
+    // other devices during their next pull, instead of only deleting it locally.
+    if (target) {
+      this.syncToGoogleSheets([{ ...target, deleted: true } as any]);
+    }
+  }
+
+  // Pull activities from OTHER devices out of the shared Google Sheet and merge them in
+  // (by id — remote wins for matching ids, since edits/deletes are pushed immediately).
+  // Called during the periodic global sync so every device converges on the same list.
+  static async pullActivitiesFromSheet(): Promise<void> {
+    const result = await this.callGasAction('get_activities');
+    if (!result.success || !Array.isArray(result.data)) return;
+
+    const remote: (ActivityRecord & { deleted?: boolean })[] = result.data;
+    if (remote.length === 0) return;
+
+    const local = this.getActivities();
+    const byId = new Map<string, ActivityRecord>();
+    local.forEach(a => byId.set(a.id, a));
+
+    remote.forEach(r => {
+      if (!r || !r.id) return;
+      if (r.deleted) {
+        byId.delete(r.id); // remove records that were deleted on another device
+      } else {
+        byId.set(r.id, r); // remote is authoritative for matching ids (latest edit wins)
+      }
+    });
+
+    this.saveActivities(Array.from(byId.values()));
+  }
+
+  // Correct a wrongly-entered record (e.g. hours typed in wrong) without losing its
+  // original id/timestamp. Also re-syncs the corrected record to Google Sheets (if a
+  // sync Web App URL is configured) so the correction isn't only local.
+  static updateActivity(
+    id: string,
+    updates: Partial<Pick<ActivityRecord, 'activityName' | 'description' | 'hours' | 'minutes' | 'activityCategory' | 'club'>>
+  ): ActivityRecord | null {
+    const list = this.getActivities();
+    const idx = list.findIndex(a => a.id === id);
+    if (idx === -1) return null;
+
+    const existing = list[idx];
+    const hours = updates.hours !== undefined ? Number(updates.hours) || 0 : existing.hours;
+    const minutes = updates.minutes !== undefined ? Number(updates.minutes) || 0 : existing.minutes;
+
+    const updated: ActivityRecord = {
+      ...existing,
+      ...updates,
+      hours,
+      minutes,
+      totalMinutes: hours * 60 + minutes
+    };
+
+    list[idx] = updated;
     this.saveActivities(list);
+
+    // Push the correction to Google Sheets too, if configured
+    this.syncToGoogleSheets([updated]);
+
+    return updated;
   }
 
   // Auth helper
