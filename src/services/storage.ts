@@ -575,9 +575,12 @@ export class StorageService {
       };
     } catch (err: any) {
       console.error('Google Sheets sync error via proxy:', err);
+      const isParseError = err instanceof SyntaxError || /json/i.test(err.message || '');
       return {
         success: false,
-        message: `เกิดข้อผิดพลาดในการเชื่อมต่อเซิร์ฟเวอร์: ${err.message || 'โปรดตรวจสอบการเชื่อมต่ออินเทอร์เน็ต'}`
+        message: isParseError
+          ? 'Google Apps Script ไม่ตอบกลับข้อมูลที่ถูกต้อง (มักเกิดจากสคริปต์ยังไม่ได้รับสิทธิ์อนุญาต หรือตั้งค่า "ผู้ที่มีสิทธิ์เข้าถึง" ไม่ใช่ "ทุกคน") — ลองเปิดตัวแก้ไข Apps Script แล้วกดปุ่มรัน (▷) ครั้งหนึ่งเพื่อยืนยันสิทธิ์ แล้วปรับใช้ใหม่อีกครั้ง'
+          : `เกิดข้อผิดพลาดในการเชื่อมต่อเซิร์ฟเวอร์: ${err.message || 'โปรดตรวจสอบการเชื่อมต่ออินเทอร์เน็ต'}`
       };
     }
   }

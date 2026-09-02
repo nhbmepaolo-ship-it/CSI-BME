@@ -15,11 +15,11 @@ export function createApiApp(): express.Express {
   // (e.g. a tab-name guess that doesn't exist) can never hang the whole serverless
   // function past its execution time limit — this was causing intermittent 500s on
   // Vercel when many tab-name candidates were tried one after another.
-  const fetchWithTimeout = async (url: string, timeoutMs = 8000): Promise<Response> => {
+  const fetchWithTimeout = async (url: string, timeoutMs = 8000, extraOptions: RequestInit = {}): Promise<Response> => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      return await fetch(url, { redirect: 'follow', signal: controller.signal });
+      return await fetch(url, { redirect: 'follow', ...extraOptions, signal: controller.signal });
     } finally {
       clearTimeout(timer);
     }
@@ -613,13 +613,12 @@ export function createApiApp(): express.Express {
 
       console.log('Proxying sync request to Google Apps Script:', gasUrl.trim());
 
-      const response = await fetch(gasUrl.trim(), {
+      const response = await fetchWithTimeout(gasUrl.trim(), 9000, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify(payload),
-        redirect: 'follow'
+        body: JSON.stringify(payload)
       });
 
       const responseText = await response.text();
