@@ -1,4 +1,5 @@
 import express from 'express';
+import { sendWeeklyCardIfConfigured } from './notify';
 
 // All CSI BME PTP backend API routes live here, factored out of server.ts so the exact
 // same Express app can be used in two different runtimes:
@@ -590,30 +591,12 @@ export function createApiApp(): express.Express {
         })
       });
 
-      let data: any = await response.json().catch(() => ({ ok: false }));
+      const data: any = await response.json();
       if (data.ok) {
         return res.json({ success: true, message: 'ส่งข้อความเข้า Telegram Bot สำเร็จเรียบร้อย!' });
+      } else {
+        return res.status(400).json({ success: false, message: `Telegram Bot Error: ${data.description || 'ส่งข้อความไม่สำเร็จ'}` });
       }
-
-      // If failed due to parse error (e.g. invalid HTML/Markdown entity), retry with clean plain text
-      if (parseMode) {
-        const plainText = message.replace(/<[^>]*>/g, '').replace(/[*_`]/g, '');
-        const retryRes = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: chatId.trim(),
-            text: plainText,
-            disable_web_page_preview: true
-          })
-        });
-        const retryData: any = await retryRes.json().catch(() => ({ ok: false }));
-        if (retryData.ok) {
-          return res.json({ success: true, message: 'ส่งข้อความเข้า Telegram Bot สำเร็จเรียบร้อย! (โหมดข้อความธรรมดา)' });
-        }
-      }
-
-      return res.status(400).json({ success: false, message: `Telegram Bot Error: ${data.description || 'ส่งข้อความไม่สำเร็จ'}` });
     } catch (err: any) {
       console.error('Telegram Send Error:', err);
       return res.status(500).json({ success: false, message: `เกิดข้อผิดพลาดในการส่ง Telegram: ${err.message}` });
@@ -670,6 +653,29 @@ export function createApiApp(): express.Express {
         success: false,
         message: `เกิดข้อผิดพลาดในการส่งข้อมูล: ${err.message || 'ไม่สามารถติดต่อ Google Apps Script ได้'}`
       });
+    }
+  });
+
+  // Scheduled weekly summary card — called automatically by Vercel Cron (see vercel.json)
+  // every Thursday 09:00 Thailand time, or by the in-process scheduler in server.ts when
+  // running on traditional Node hosting instead of Vercel. Protected by CRON_SECRET so
+  // random visitors can't trigger a real LINE/Telegram send by hitting the URL directly —
+  // Vercel automatically sends "Authorization: Bearer <CRON_SECRET>" when it invokes a
+  // Cron Job, as long as an env var named CRON_SECRET is set on the project.
+  app.get('/api/cron/weekly-card', async (req, res) => {
+    const expectedSecret = (process.env.CRON_SECRET || '').trim();
+    if (expectedSecret) {
+      const authHeader = req.headers['authorization'] || '';
+      if (authHeader !== `Bearer ${expectedSecret}`) {
+        return res.status(401).json({ success: false, message: 'Unauthorized' });
+      }
+    }
+    try {
+      const result = await sendWeeklyCardIfConfigured();
+      return res.json(result);
+    } catch (err: any) {
+      console.error('Weekly card cron error:', err);
+      return res.status(500).json({ success: false, message: err.message || 'เกิดข้อผิดพลาดในการส่งการ์ดสรุปอัตโนมัติ' });
     }
   });
 

@@ -26,45 +26,41 @@ const GAS_MULTI_ACTION_SCRIPT = `function doPost(e) { return handleRequest(e); }
 function doGet(e) { return handleRequest(e); }
 
 // ทุกอุปกรณ์ที่ตั้งค่า Web App URL นี้ไว้ จะเห็นข้อมูลชุดเดียวกันเสมอ (อ่าน/เขียนชีทเดียวกัน)
-var SPREADSHEET_ID = "11qoHRaakTjvDWvOekqTTlP2SFcqdfys6cT653wRfjUA"; // ID Google Sheet
-
 var ACTIVITY_SHEET = "กิจกรรม";
 var ACTIVITY_COLS = ["id","date","timestamp","username","fullName","nickname","club","category","activityName","hours","minutes","totalMinutes","description","deleted"];
 
 var VOTE_SHEET = "โหวต";
 var VOTE_COLS = ["id","timestamp","voter","category","nominee","voteMonth","deleted"];
 
-var CSI_SHEET = "CSI Electronic (การตอบกลับ)";
-var CSI_COLS = [
-  "timestamp", "site", "division", "dept", "staffName", "contactType",
-  "use_service1", "q1_1", "q1_2", "q1_3", "q1_4", "q1_5", "q1_6", "q1_7",
-  "use_service2", "q2_1", "q2_2", "q2_3", "q2_4", "q2_5",
-  "goodStaff", "goodReason", "badStaff", "badReason", "extraNote"
-];
-
 var ORGCHART_SHEET = "ผังองค์กร";
+
+var COACHING_SHEET = "แผนพัฒนา";
+var COACHING_COLS = ["id","empId","contractType","position","fullName","nickname","animalType","coachName","topic1","topic2","topic3","evaluationScore","progressPercent","hoursW1","hoursW2","hoursW3","hoursW4","hoursW5","hoursW6","totalHours"];
 
 function handleRequest(e) {
   try {
     var ss;
     try { ss = SpreadsheetApp.getActiveSpreadsheet(); } catch (err) {}
 
+    // หากสร้างสคริปต์ที่ script.google.com (ไม่ได้เปิดจากหน้า Google Sheet) ให้ใส่ ID ของ Sheet
     if (!ss) {
+      var SPREADSHEET_ID = "ใส่_ID_ของ_GOOGLE_SHEET_ตรงนี้"; // เช่น 1BxiMVs0XR...
       ss = SpreadsheetApp.openById(SPREADSHEET_ID);
     }
 
     var contents = e && e.postData ? e.postData.contents : null;
     var data = contents ? JSON.parse(contents) : (e && e.parameter && e.parameter.data ? JSON.parse(e.parameter.data) : {});
-    var action = data.action || "sync_activities";
+    var action = data.action || "sync_activities"; // เผื่อกรณีเรียกแบบสคริปต์เวอร์ชันเก่าที่ไม่ส่ง action มา
 
     switch (action) {
       case "sync_activities": return upsertRecords(ss, ACTIVITY_SHEET, ACTIVITY_COLS, data.activities || []);
       case "get_activities": return getRecords(ss, ACTIVITY_SHEET, ACTIVITY_COLS);
       case "sync_votes": return upsertRecords(ss, VOTE_SHEET, VOTE_COLS, data.votes || []);
       case "get_votes": return getRecords(ss, VOTE_SHEET, VOTE_COLS);
-      case "sync_csi": return appendCsiRecords(ss, CSI_SHEET, CSI_COLS, data.csiRecords || []);
       case "sync_orgchart": return saveBlob(ss, ORGCHART_SHEET, data.orgChart);
       case "get_orgchart": return getBlob(ss, ORGCHART_SHEET);
+      case "sync_coaching": return upsertRecords(ss, COACHING_SHEET, COACHING_COLS, data.coachingRecords || []);
+      case "get_coaching": return getRecords(ss, COACHING_SHEET, COACHING_COLS);
       default: return jsonOut({ success: false, message: "ไม่รู้จัก action: " + action });
     }
   } catch (err) {
@@ -81,16 +77,6 @@ function getOrCreateSheet(ss, name, header) {
     sheet.appendRow(header);
   }
   return sheet;
-}
-
-function appendCsiRecords(ss, sheetName, cols, records) {
-  if (!records || records.length === 0) return jsonOut({ success: true, message: "ไม่มีข้อมูล CSI ให้บันทึก" });
-  var sheet = getOrCreateSheet(ss, sheetName, cols);
-  records.forEach(function (rec) {
-    var rowValues = cols.map(function (c) { return rec[c] !== undefined ? rec[c] : ""; });
-    sheet.appendRow(rowValues);
-  });
-  return jsonOut({ success: true, message: "บันทึกข้อมูล CSI ลง Sheet เรียบร้อยแล้ว (" + records.length + " แถว)" });
 }
 
 // เพิ่มแถวใหม่ หรืออัปเดตแถวเดิมถ้ามี id ซ้ำอยู่แล้ว (กันข้อมูลซ้ำเวลาซิงค์ซ้ำๆ)
@@ -330,9 +316,7 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
       .slice(0, 8)
       .map(e => ({
         name: e.nickname || e.fullName.split(' ')[0],
-        nickname: e.nickname,
         fullName: e.fullName,
-        img: e.img,
         hours: Number((e.totalMinutes / 60).toFixed(1)),
         minutes: e.totalMinutes,
         club: e.club
@@ -902,34 +886,24 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
                 </div>
 
                 {/* Employee Photo Avatar */}
-                <div className="relative flex-shrink-0">
-                  <img
-                    src={emp.img || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(emp.nickname)}`}
-                    alt={emp.nickname}
-                    className="w-14 h-14 rounded-2xl object-cover bg-slate-800 border-2 border-emerald-400 shadow-md"
-                    onError={e => {
-                      (e.target as HTMLImageElement).src = `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(emp.nickname)}`;
-                    }}
-                  />
-                  <span className="absolute -bottom-1 -right-1 bg-slate-900/90 text-emerald-300 border border-emerald-400/40 text-[10px] font-black px-1.5 py-0.2 rounded-md shadow">
-                    {emp.nickname}
-                  </span>
-                </div>
+                <img
+                  src={emp.img || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(emp.nickname)}`}
+                  alt={emp.nickname}
+                  className="w-13 h-13 rounded-2xl object-cover bg-slate-800 border-2 border-emerald-400/60 shadow-md flex-shrink-0"
+                  onError={e => {
+                    (e.target as HTMLImageElement).src = `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(emp.nickname)}`;
+                  }}
+                />
 
                 {/* Employee Details */}
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <span className="font-th font-extrabold text-base text-amber-300">
-                      {emp.nickname}
-                    </span>
-                    <span className="text-xs text-slate-300 truncate">
-                      ({emp.fullName})
-                    </span>
+                  <div className="font-th font-extrabold text-sm text-white truncate">
+                    {emp.fullName} ({emp.nickname})
                   </div>
                   <div className="text-[11px] text-emerald-300 font-bold truncate mt-0.5">
                     <i className="fa-solid fa-users-rectangle mr-1 text-[10px]"></i>{emp.club}
                   </div>
-                  <div className="text-[10px] text-slate-400 mt-1">
+                  <div className="text-[10px] text-slate-300 mt-1">
                     เข้าร่วม {emp.activityCount} ครั้ง
                   </div>
                 </div>
@@ -977,7 +951,7 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
             <thead className="bg-slate-950/80 text-slate-300 font-bold border-b border-white/10">
               <tr>
                 <th className="p-3">วันที่ทำกิจกรรม</th>
-                <th className="p-3">พนักงาน (รูป & ชื่อเล่น)</th>
+                <th className="p-3">ชื่อพนักงาน</th>
                 <th className="p-3">ชมรมที่สังกัด</th>
                 <th className="p-3">ประเภทกิจกรรม</th>
                 <th className="p-3">ชื่อกิจกรรม</th>
@@ -992,30 +966,8 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
                   <td className="p-3 font-mono text-[11px] text-slate-300 whitespace-nowrap">
                     {new Date(act.timestamp).toLocaleDateString('th-TH')}
                   </td>
-                  <td className="p-3 whitespace-nowrap">
-                    <div className="flex items-center gap-2.5">
-                      <img
-                        src={photoMap[act.username] || photoMap[act.fullName] || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(act.nickname || 'user')}`}
-                        alt={act.nickname}
-                        className="w-9 h-9 rounded-xl object-cover bg-slate-800 border border-emerald-400/50 shadow-sm flex-shrink-0"
-                        onError={e => {
-                          (e.target as HTMLImageElement).src = `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(act.nickname || 'user')}`;
-                        }}
-                      />
-                      <div>
-                        <div className="flex items-center gap-1.5">
-                          <span className="font-th font-extrabold text-xs text-amber-300 bg-amber-500/15 border border-amber-400/30 px-1.5 py-0.2 rounded-md">
-                            {act.nickname || 'พนักงาน'}
-                          </span>
-                          <span className="font-bold text-white text-xs">
-                            {act.fullName}
-                          </span>
-                        </div>
-                        <div className="text-[10px] text-slate-400 font-mono mt-0.5">
-                          {act.username}
-                        </div>
-                      </div>
-                    </div>
+                  <td className="p-3 font-bold text-white whitespace-nowrap">
+                    {act.fullName} ({act.nickname})
                   </td>
                   <td className="p-3 text-emerald-300 font-semibold whitespace-nowrap">
                     {act.club}

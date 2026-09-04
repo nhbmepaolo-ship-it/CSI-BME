@@ -46,28 +46,8 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ currentUser, s
   const [editClub, setEditClub] = useState<HappyLifeClub>('ชมรมเดิน-วิ่ง');
   const [editIsAdmin, setEditIsAdmin] = useState(false);
 
-  const [isSyncing, setIsSyncing] = useState(false);
-
   const loadData = () => {
     setEmployees(StorageService.getEmployees());
-  };
-
-  const handleSyncSheet = async () => {
-    setIsSyncing(true);
-    try {
-      const sheetId = StorageService.getGoogleSheetId();
-      const res = await StorageService.fetchAndSyncFromGoogleSheet(sheetId);
-      loadData();
-      if (res.success) {
-        showToast('success', 'ซิงค์ข้อมูลจาก Google Sheet เรียบร้อยแล้ว!');
-      } else {
-        showToast('error', res.message || 'ซิงค์ข้อมูลไม่สำเร็จ');
-      }
-    } catch (e: any) {
-      showToast('error', `เกิดข้อผิดพลาดในการซิงค์: ${e.message}`);
-    } finally {
-      setIsSyncing(false);
-    }
   };
 
   useEffect(() => {
@@ -244,15 +224,13 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ currentUser, s
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={handleSyncSheet}
-            disabled={isSyncing}
-            className="px-4 py-2.5 rounded-2xl bg-emerald-600/80 hover:bg-emerald-500 text-white font-th font-bold text-xs shadow-lg flex items-center gap-2 transition-all border border-emerald-400/30 disabled:opacity-50"
+          <div
+            title="ข้อมูลพนักงานอัปเดตอัตโนมัติจาก Google Sheet ทุก 30 วินาที ไม่ต้องกดเอง"
+            className="px-3.5 py-2.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-bold flex items-center gap-2 select-none"
           >
-            <i className={`fa-solid fa-rotate ${isSyncing ? 'animate-spin' : ''}`}></i>
-            <span>{isSyncing ? 'กำลังซิงค์...' : 'ซิงค์ข้อมูลพนักงาน Google Sheet'}</span>
-          </button>
+            <i className="fa-solid fa-circle-check"></i>
+            <span>อัปเดตอัตโนมัติ</span>
+          </div>
 
           {isSuperAdmin && (
             <button

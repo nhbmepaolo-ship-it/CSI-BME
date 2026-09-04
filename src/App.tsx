@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Employee } from './types';
 import { StorageService } from './services/storage';
 import { isAuthorizedAdminUser } from './data/initialData';
@@ -55,13 +55,35 @@ export default function App() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncVersion, setSyncVersion] = useState(0);
 
+  // Always-current copy of activePage for the setInterval closure below (the interval is
+  // created once on mount, so without this ref it would forever see whatever page was
+  // active at that first render — a stale-closure bug).
+  const activePageRef = useRef(activePage);
+  useEffect(() => {
+    activePageRef.current = activePage;
+  }, [activePage]);
+
+  // Bumping syncVersion remounts the whole active page (it's used as that page's `key`),
+  // which is how a page picks up freshly-synced data — but it also resets any unsaved
+  // input, open dropdowns, and scroll position on that page. That remount firing every
+  // 2 minutes in the background is what made the app feel like it kept "resetting/reloading
+  // itself" (ระบบเหมือนซิงค์คืนข้อมูลตลอดเวลา) even while someone was in the middle of
+  // filling a form. So: a MANUAL sync (button press) always refreshes the view, but a
+  // SILENT background sync only remounts read-only dashboard pages, never pages where the
+  // person is actively entering or editing something.
+  const PASSIVE_DASHBOARD_PAGES: PageView[] = ['csi-dash', 'act-dash'];
+  const refreshViewIfSafe = (silent: boolean) => {
+    if (!silent || PASSIVE_DASHBOARD_PAGES.includes(activePageRef.current)) {
+      setSyncVersion(prev => prev + 1);
+    }
+  };
+
   const triggerGlobalSync = async (silent = true) => {
-    if (!silent) setIsSyncing(true);
+    setIsSyncing(true);
     try {
       const res = await StorageService.fetchAndSyncFromGoogleSheet();
-      let hasChanges = false;
       if (res.success) {
-        hasChanges = true;
+        refreshViewIfSafe(silent);
 
         // Refresh current user's data (photo, name, etc.) if it changed in the Google Sheet,
         // without relying on any persisted/stored login session
@@ -79,41 +101,45 @@ export default function App() {
         showToast('error', res.message || 'ซิงค์ข้อมูลไม่สำเร็จ');
       }
 
-      // Pull shared activities/votes/org chart from Google Sheets too, if a GAS Web App
-      // URL has been configured (silently skipped otherwise).
+      // Pull shared activities/votes/org chart/coaching from Google Sheets too, if a GAS
+      // Web App URL has been configured (silently skipped otherwise). This is what makes
+      // that data actually shared across devices instead of living only in one browser's
+      // localStorage.
       try {
         await Promise.all([
           StorageService.pullActivitiesFromSheet(),
           StorageService.pullVotesFromSheet(),
-          StorageService.pullOrgChartFromSheet()
+          StorageService.pullOrgChartFromSheet(),
+          StorageService.pullCoachingFromSheet()
         ]);
-        hasChanges = true;
+        refreshViewIfSafe(silent);
       } catch (e) {
-        console.warn('Shared-data pull (activities/votes/org chart) skipped:', e);
-      }
-
-      if (hasChanges) {
-        setSyncVersion(prev => prev + 1);
+        console.warn('Shared-data pull (activities/votes/org chart/coaching) skipped:', e);
       }
     } catch {
       if (!silent) showToast('error', 'เกิดข้อผิดพลาดในการเชื่อมต่อ Google Sheet');
     } finally {
-      if (!silent) setIsSyncing(false);
+      setIsSyncing(false);
     }
   };
 
   useEffect(() => {
     // Intentionally do NOT auto-login with any user (default or previously stored).
-    StorageService.setCurrentUser(null);
+    // Every time the app is opened it starts with NO user selected — pure view-only mode.
+    // The person must explicitly log in (from the Vote or Activity Log page) each time
+    // they want to submit/edit anything.
+    StorageService.setCurrentUser(null); // clear any leftover session from earlier versions of the app
     setCurrentUser(null);
 
-    // Immediately trigger initial sync from Google Sheet once on app startup
+    // Immediately trigger auto-sync from Google Sheet on app startup
     triggerGlobalSync(true);
 
-    // Periodic background sync every 5 minutes (300,000 ms) silently
+    // Set up periodic background auto-sync every 30 seconds — this is now the ONLY way
+    // data refreshes (the manual "ซิงค์ Sheet" button was removed so the connection feels
+    // fully automatic instead of something people have to remember to click).
     const syncInterval = setInterval(() => {
       triggerGlobalSync(true);
-    }, 300000);
+    }, 30000);
 
     return () => clearInterval(syncInterval);
   }, []);
@@ -387,21 +413,19 @@ export default function App() {
             </p>
           </div>
 
-          {/* Quick Page Nav & Sync Button */}
+          {/* Quick Page Nav & Live Sync Status (no manual button — syncs automatically every 30s) */}
           <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => triggerGlobalSync(false)}
-              disabled={isSyncing}
-              title="ซิงค์ข้อมูลจาก Google Sheet ทั้งหมด"
-              className={`px-2.5 py-1.5 rounded-xl text-xs font-bold border transition-all flex items-center gap-1.5 ${
+            <div
+              title="เชื่อมต่อ Google Sheet และอัปเดตข้อมูลอัตโนมัติทุก 30 วินาที ไม่ต้องกดเอง"
+              className={`px-2.5 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 select-none ${
                 isSyncing
-                  ? 'bg-amber-500/30 text-amber-200 border-amber-400/50 animate-pulse'
-                  : 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border-emerald-400/40'
+                  ? 'bg-amber-500/20 text-amber-200 border-amber-400/40'
+                  : 'bg-emerald-500/10 text-emerald-300 border-emerald-400/30'
               }`}
             >
-              <i className={`fa-solid fa-rotate ${isSyncing ? 'animate-spin text-amber-300' : 'text-emerald-400'}`}></i>
-              <span className="hidden sm:inline">{isSyncing ? 'กำลังซิงค์...' : 'ซิงค์ Sheet'}</span>
-            </button>
+              <span className={`w-2 h-2 rounded-full ${isSyncing ? 'bg-amber-400 animate-pulse' : 'bg-emerald-400 animate-pulse'}`}></span>
+              <span className="hidden sm:inline">{isSyncing ? 'กำลังอัปเดต...' : 'อัปเดตอัตโนมัติ'}</span>
+            </div>
 
             <button
               onClick={() => setActivePage('csi-form')}

@@ -44,6 +44,7 @@ export interface CSIRecord {
   badStaff: string;
   badReason: string;
   extraNote: string;
+  source?: 'sheet' | 'local'; // 'sheet' = pulled from the Google Sheet (authoritative, replaced on every sync); 'local' = submitted through this app's own CSI form and never written back to the sheet, so it must survive a sync instead of being treated as stale
 }
 
 export interface VoteRecord {
