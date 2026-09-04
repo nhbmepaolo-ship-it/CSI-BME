@@ -1053,26 +1053,10 @@ export const NotificationCard: React.FC<NotificationCardProps> = ({ currentUser,
                 <span>ตั้งค่า Webhook (Line Messaging / Telegram Bot)</span>
               </h2>
 
-              <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full border ${
-                isAuthorized
-                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
-                  : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
-              }`}>
-                {isAuthorized ? '✓ สิทธิ์ผู้ดูแลระบบ' : '🔒 จำกัดสิทธิ์เข้าถึง'}
+              <span className="text-[10px] font-bold px-2.5 py-1 rounded-full border bg-emerald-500/20 text-emerald-300 border-emerald-500/30">
+                ✓ พร้อมกำหนดค่าการแจ้งเตือน
               </span>
             </div>
-
-            {!isAuthorized && (
-              <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs leading-relaxed flex items-start gap-2.5">
-                <i className="fa-solid fa-lock text-amber-400 text-base mt-0.5"></i>
-                <div>
-                  <strong>การตั้งค่าระบบถูกจำกัดสิทธิ์</strong>
-                  <p className="text-[11px] text-amber-300/80 mt-0.5">
-                    การแก้ไข Token, Webhook URL และ Chat ID สงวนสิทธิ์เฉพาะ 3 บัญชีผู้ใช้เท่านั้น: <span className="font-mono font-bold text-white">SPV_BME</span>, <span className="font-mono font-bold text-white">MGR_BME</span> และ <span className="font-mono font-bold text-white">563770</span>
-                  </p>
-                </div>
-              </div>
-            )}
 
             <div className="space-y-3 text-xs">
               <div>
@@ -1081,11 +1065,10 @@ export const NotificationCard: React.FC<NotificationCardProps> = ({ currentUser,
                 </label>
                 <input
                   type="text"
-                  disabled={!isAuthorized}
                   value={settings.lineChannelToken || ''}
                   onChange={e => setSettings({ ...settings, lineChannelToken: e.target.value })}
                   placeholder="uiEPGyvhZMjFZkGPPejqVl8s..."
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white font-mono text-[11px] outline-none focus:border-green-500 disabled:opacity-60 disabled:cursor-not-allowed"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white font-mono text-[11px] outline-none focus:border-green-500"
                 />
               </div>
 
@@ -1096,11 +1079,10 @@ export const NotificationCard: React.FC<NotificationCardProps> = ({ currentUser,
                   </label>
                   <input
                     type="text"
-                    disabled={!isAuthorized}
                     value={settings.lineGroupId || ''}
                     onChange={e => setSettings({ ...settings, lineGroupId: e.target.value })}
                     placeholder="C1f1109f61de6683..."
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white font-mono text-[11px] outline-none focus:border-green-500 disabled:opacity-60 disabled:cursor-not-allowed"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white font-mono text-[11px] outline-none focus:border-green-500"
                   />
                 </div>
 
@@ -1110,11 +1092,10 @@ export const NotificationCard: React.FC<NotificationCardProps> = ({ currentUser,
                   </label>
                   <input
                     type="text"
-                    disabled={!isAuthorized}
                     value={settings.lineUserId || ''}
                     onChange={e => setSettings({ ...settings, lineUserId: e.target.value })}
                     placeholder="Ucbf8c9e32fc26..."
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white font-mono text-[11px] outline-none focus:border-green-500 disabled:opacity-60 disabled:cursor-not-allowed"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white font-mono text-[11px] outline-none focus:border-green-500"
                   />
                 </div>
               </div>
@@ -1125,11 +1106,10 @@ export const NotificationCard: React.FC<NotificationCardProps> = ({ currentUser,
                 </label>
                 <input
                   type="text"
-                  disabled={!isAuthorized}
                   value={settings.lineWebhookUrl || ''}
                   onChange={e => setSettings({ ...settings, lineWebhookUrl: e.target.value })}
-                  placeholder="https://webhook.site/..."
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white font-mono text-[11px] outline-none focus:border-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed"
+                  placeholder="https://script.google.com/macros/s/.../exec หรือ https://webhook.site/..."
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white font-mono text-[11px] outline-none focus:border-indigo-500"
                 />
               </div>
 
@@ -1139,11 +1119,10 @@ export const NotificationCard: React.FC<NotificationCardProps> = ({ currentUser,
                 </label>
                 <input
                   type="text"
-                  disabled={!isAuthorized}
                   value={settings.telegramBotToken || ''}
                   onChange={e => setSettings({ ...settings, telegramBotToken: e.target.value })}
                   placeholder="123456789:ABCdefGhIJKlmNoPQrsTUVwxyZ"
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white font-mono outline-none focus:border-sky-500 disabled:opacity-60 disabled:cursor-not-allowed"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white font-mono outline-none focus:border-sky-500"
                 />
               </div>
 
@@ -1153,22 +1132,20 @@ export const NotificationCard: React.FC<NotificationCardProps> = ({ currentUser,
                 </label>
                 <input
                   type="text"
-                  disabled={!isAuthorized}
                   value={settings.telegramChatId || ''}
                   onChange={e => setSettings({ ...settings, telegramChatId: e.target.value })}
-                  placeholder="-100123456789"
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white font-mono outline-none focus:border-sky-500 disabled:opacity-60 disabled:cursor-not-allowed"
+                  placeholder="-100123456789 หรือ @channel_name"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white font-mono outline-none focus:border-sky-500"
                 />
               </div>
 
-              {isAuthorized && (
-                <button
-                  type="submit"
-                  className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white font-bold text-xs transition-all"
-                >
-                  บันทึกการตั้งค่า Webhook
-                </button>
-              )}
+              <button
+                type="submit"
+                className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <i className="fa-solid fa-floppy-disk"></i>
+                <span>บันทึกการตั้งค่า Webhook &amp; การแจ้งเตือน</span>
+              </button>
             </div>
 
             <hr className="border-slate-800" />

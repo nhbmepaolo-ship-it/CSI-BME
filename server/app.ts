@@ -590,12 +590,30 @@ export function createApiApp(): express.Express {
         })
       });
 
-      const data: any = await response.json();
+      let data: any = await response.json().catch(() => ({ ok: false }));
       if (data.ok) {
         return res.json({ success: true, message: 'ส่งข้อความเข้า Telegram Bot สำเร็จเรียบร้อย!' });
-      } else {
-        return res.status(400).json({ success: false, message: `Telegram Bot Error: ${data.description || 'ส่งข้อความไม่สำเร็จ'}` });
       }
+
+      // If failed due to parse error (e.g. invalid HTML/Markdown entity), retry with clean plain text
+      if (parseMode) {
+        const plainText = message.replace(/<[^>]*>/g, '').replace(/[*_`]/g, '');
+        const retryRes = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId.trim(),
+            text: plainText,
+            disable_web_page_preview: true
+          })
+        });
+        const retryData: any = await retryRes.json().catch(() => ({ ok: false }));
+        if (retryData.ok) {
+          return res.json({ success: true, message: 'ส่งข้อความเข้า Telegram Bot สำเร็จเรียบร้อย! (โหมดข้อความธรรมดา)' });
+        }
+      }
+
+      return res.status(400).json({ success: false, message: `Telegram Bot Error: ${data.description || 'ส่งข้อความไม่สำเร็จ'}` });
     } catch (err: any) {
       console.error('Telegram Send Error:', err);
       return res.status(500).json({ success: false, message: `เกิดข้อผิดพลาดในการส่ง Telegram: ${err.message}` });

@@ -56,11 +56,12 @@ export default function App() {
   const [syncVersion, setSyncVersion] = useState(0);
 
   const triggerGlobalSync = async (silent = true) => {
-    setIsSyncing(true);
+    if (!silent) setIsSyncing(true);
     try {
       const res = await StorageService.fetchAndSyncFromGoogleSheet();
+      let hasChanges = false;
       if (res.success) {
-        setSyncVersion(prev => prev + 1);
+        hasChanges = true;
 
         // Refresh current user's data (photo, name, etc.) if it changed in the Google Sheet,
         // without relying on any persisted/stored login session
@@ -79,41 +80,40 @@ export default function App() {
       }
 
       // Pull shared activities/votes/org chart from Google Sheets too, if a GAS Web App
-      // URL has been configured (silently skipped otherwise). This is what makes those
-      // three data types actually shared across devices instead of living only in one
-      // browser's localStorage.
+      // URL has been configured (silently skipped otherwise).
       try {
         await Promise.all([
           StorageService.pullActivitiesFromSheet(),
           StorageService.pullVotesFromSheet(),
           StorageService.pullOrgChartFromSheet()
         ]);
-        setSyncVersion(prev => prev + 1);
+        hasChanges = true;
       } catch (e) {
         console.warn('Shared-data pull (activities/votes/org chart) skipped:', e);
+      }
+
+      if (hasChanges) {
+        setSyncVersion(prev => prev + 1);
       }
     } catch {
       if (!silent) showToast('error', 'เกิดข้อผิดพลาดในการเชื่อมต่อ Google Sheet');
     } finally {
-      setIsSyncing(false);
+      if (!silent) setIsSyncing(false);
     }
   };
 
   useEffect(() => {
     // Intentionally do NOT auto-login with any user (default or previously stored).
-    // Every time the app is opened it starts with NO user selected — pure view-only mode.
-    // The person must explicitly log in (from the Vote or Activity Log page) each time
-    // they want to submit/edit anything.
-    StorageService.setCurrentUser(null); // clear any leftover session from earlier versions of the app
+    StorageService.setCurrentUser(null);
     setCurrentUser(null);
 
-    // Immediately trigger auto-sync from Google Sheet on app startup
+    // Immediately trigger initial sync from Google Sheet once on app startup
     triggerGlobalSync(true);
 
-    // Set up periodic background auto-sync every 2 minutes (120,000 ms)
+    // Periodic background sync every 5 minutes (300,000 ms) silently
     const syncInterval = setInterval(() => {
       triggerGlobalSync(true);
-    }, 120000);
+    }, 300000);
 
     return () => clearInterval(syncInterval);
   }, []);

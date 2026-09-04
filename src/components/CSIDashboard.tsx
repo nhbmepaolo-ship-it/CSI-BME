@@ -79,8 +79,6 @@ export const CSIDashboard: React.FC = () => {
 
   useEffect(() => {
     loadData();
-    // Auto sync from Google Sheet on mount
-    handleSyncFromSheet();
   }, []);
 
   const years = useMemo(() => {

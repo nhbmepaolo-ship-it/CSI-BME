@@ -21,7 +21,8 @@ export class StorageService {
   // every device connected to the same GAS URL converges on the same data instead of
   // each browser's localStorage being an island.
   private static getGasUrl(): string {
-    return (localStorage.getItem('csi_google_sheets_url') || '').trim();
+    return (localStorage.getItem('csi_google_sheets_url') || '').trim() ||
+      'https://script.google.com/macros/s/AKfycby_TunZUkHu_9jTuyl0W8Fa-L0IVJ4_G3rCTrxzPEkZIrxDcNpZwbpMa0ejaIUTZlaX/exec';
   }
 
   private static async callGasAction(action: string, extra: Record<string, any> = {}): Promise<{ success: boolean; data?: any; message?: string }> {
@@ -369,6 +370,110 @@ export class StorageService {
     const list = this.getCSIRecords();
     list.unshift(record);
     this.saveCSIRecords(list);
+
+    // Auto sync new record to Google Sheets if Web App URL is configured
+    this.syncCSIToGoogleSheets([record]);
+
+    // Send Line / Telegram Auto-Notification
+    const scores = [
+      record.q1_1, record.q1_2, record.q1_3, record.q1_4, record.q1_5, record.q1_6, record.q1_7,
+      record.q2_1, record.q2_2, record.q2_3, record.q2_4, record.q2_5
+    ].filter(x => typeof x === 'number' && x > 0);
+    const avgScore = scores.length > 0 ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1) : '5.0';
+
+    const thaiDate = new Date(record.timestamp).toLocaleDateString('th-TH', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+
+    const lines = [
+      `📢 มีแบบประเมิน CSI BME ใหม่เข้ามา!`,
+      `🏥 แผนกที่ประเมิน: ${record.dept}`,
+      `👤 ผู้ประเมิน: ${record.staffName || 'ไม่ระบุชื่อ'}`,
+      `⭐ คะแนนเฉลี่ย: ${avgScore} / 5.0`,
+      record.goodStaff ? `💖 พนักงานที่ประทับใจ: ${record.goodStaff}` : '',
+      record.goodReason ? `💬 เหตุผล: ${record.goodReason}` : '',
+      record.badStaff ? `⚠️ พนักงานที่ควรปรับปรุง: ${record.badStaff} (${record.badReason})` : '',
+      record.extraNote ? `📝 ข้อเสนอแนะ: ${record.extraNote}` : '',
+      `🗓️ วันที่: ${thaiDate}`,
+      `💙 BME PTP Evaluation System`
+    ].filter(Boolean);
+
+    this.sendNotification(lines.join('\n'));
+  }
+
+  static async syncCSIToGoogleSheets(records: CSIRecord[]): Promise<{ success: boolean; message: string }> {
+    const targetUrl = (localStorage.getItem('csi_google_sheets_url') || '').trim() ||
+      'https://script.google.com/macros/s/AKfycby_TunZUkHu_9jTuyl0W8Fa-L0IVJ4_G3rCTrxzPEkZIrxDcNpZwbpMa0ejaIUTZlaX/exec';
+
+    try {
+      const res = await fetch('/api/sync-sheets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          gasUrl: targetUrl,
+          payload: {
+            action: 'sync_csi',
+            spreadsheetId: '11qoHRaakTjvDWvOekqTTlP2SFcqdfys6cT653wRfjUA',
+            csiRecords: records
+          }
+        })
+      });
+      const data = await res.json();
+      return { success: data.success, message: data.message || 'ส่งข้อมูล CSI สำเร็จ' };
+    } catch (err: any) {
+      console.error('Error syncing CSI to Google Sheets:', err);
+      return { success: false, message: err.message };
+    }
+  }
+
+  static async sendNotification(message: string, flexMessage?: any): Promise<void> {
+    const settings = this.getCardSettings();
+    const lineChannelToken = settings.lineChannelToken?.trim();
+    const lineWebhookUrl = settings.lineWebhookUrl?.trim();
+    const telegramBotToken = settings.telegramBotToken?.trim();
+    const telegramChatId = settings.telegramChatId?.trim();
+
+    // Send LINE
+    if (lineChannelToken || lineWebhookUrl) {
+      try {
+        await fetch('/api/send-line', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            lineChannelToken,
+            lineWebhookUrl,
+            lineGroupId: settings.lineGroupId?.trim(),
+            lineUserId: settings.lineUserId?.trim(),
+            message,
+            flexMessage,
+            flexAltText: 'ระบบแจ้งเตือน CSI & กิจกรรม BME'
+          })
+        });
+      } catch (e) {
+        console.error('Auto LINE notification error:', e);
+      }
+    }
+
+    // Send Telegram
+    if (telegramBotToken && telegramChatId) {
+      try {
+        await fetch(`https://api.telegram.org/bot${telegramBotToken}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: telegramChatId,
+            text: message,
+            disable_web_page_preview: true
+          })
+        });
+      } catch (e) {
+        console.error('Auto Telegram notification error:', e);
+      }
+    }
   }
 
   // Vote Records
@@ -466,6 +571,17 @@ export class StorageService {
     // Push to the shared Google Sheet too (fire-and-forget) so this vote is visible
     // from other devices too, not just this browser.
     this.callGasAction('sync_votes', { votes: [newVote] });
+
+    // Send Line / Telegram Auto-Notification
+    const voteNotice = [
+      `🌟 มีการโหวต BME Star Vote ใหม่!`,
+      `🏆 หมวดหมู่: ${category}`,
+      `💖 โหวตให้: ${nominee}`,
+      `🗳️ ผู้ลงคะแนน: ${voter}`,
+      `🗓️ รอบเดือน: ${voteMonth}`,
+      `💙 BME Star Vote System`
+    ].join('\n');
+    this.sendNotification(voteNotice);
 
     return {
       success: true,
@@ -608,6 +724,20 @@ export class StorageService {
 
     // Auto sync new record to Google Sheets if Web App URL is configured
     this.syncToGoogleSheets([newRecord]);
+
+    // Send Line / Telegram Auto-Notification
+    const actNotice = [
+      `🏃 มีการบันทึกกิจกรรม Happy Life & HR-PTP ใหม่!`,
+      `👤 พนักงาน: ${record.fullName} (${record.nickname})`,
+      `🏅 ชมรม: ${record.club}`,
+      `📌 หมวดหมู่: ${record.activityCategory}`,
+      `🎯 กิจกรรม: ${record.activityName}`,
+      `⏱️ ระยะเวลา: ${hours} ชม. ${minutes} นาที`,
+      record.description ? `📝 รายละเอียด: ${record.description}` : '',
+      `🗓️ วันที่: ${now.toLocaleDateString('th-TH')}`,
+      `💙 BME Activity Logger`
+    ].filter(Boolean).join('\n');
+    this.sendNotification(actNotice);
 
     return newRecord;
   }
