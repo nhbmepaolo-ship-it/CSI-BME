@@ -16,6 +16,30 @@ export function normalizeGasUrl(url?: string): string {
   return clean;
 }
 
+export function formatInternationalDateTime(dateInput?: string | Date | number): string {
+  let d: Date;
+  if (!dateInput) {
+    d = new Date();
+  } else if (typeof dateInput === 'string' && /^\d{2}\/\d{2}\/\d{2}:\d{2}\/\d{2}\/\d{2}$/.test(dateInput.trim())) {
+    return dateInput.trim();
+  } else {
+    d = new Date(dateInput);
+  }
+
+  if (isNaN(d.getTime())) {
+    d = new Date();
+  }
+
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = String(d.getFullYear()).slice(-2);
+  const hours = String(d.getHours()).padStart(2, '0');
+  const minutes = String(d.getMinutes()).padStart(2, '0');
+  const seconds = String(d.getSeconds()).padStart(2, '0');
+
+  return `${day}/${month}/${year}:${hours}/${minutes}/${seconds}`;
+}
+
 const KEYS = {
   EMPLOYEES: 'csi_bme_employees_v2',
   CSI_RECORDS: 'csi_bme_csi_records_v2',
@@ -433,7 +457,7 @@ export class StorageService {
 
     const newVote: VoteRecord = {
       id: 'vote-' + Date.now(),
-      timestamp: now.toISOString().replace('T', ' ').substring(0, 19),
+      timestamp: formatInternationalDateTime(now),
       voter,
       category,
       nominee,
@@ -494,10 +518,10 @@ export class StorageService {
 
     const payload = {
       action: 'sync_activities',
-      timestamp: new Date().toISOString(),
+      timestamp: formatInternationalDateTime(),
       totalRecords: activities.length,
       activities: activities.map(a => ({
-        date: new Date(a.timestamp).toLocaleDateString('th-TH'),
+        date: formatInternationalDateTime(a.timestamp),
         username: a.username,
         fullName: a.fullName,
         nickname: a.nickname,
@@ -1150,7 +1174,7 @@ export class StorageService {
                       position,
                       fullName,
                       nickname: nickname || fullName,
-                      contractType,
+                      contractType: (contractType === 'Out source' ? 'Out source' : 'Full Time') as 'Out source' | 'Full Time',
                       animalType,
                       coachName,
                       topic1: 'Active Listening & Communication',

@@ -586,7 +586,31 @@ async function startServer() {
   });
 
   // API Proxy Route for Google Apps Script Sync
-  app.post('/api/sync-sheets', async (req, res) => {
+  function formatInternationalDateTime(dateInput?: string | Date | number): string {
+  let d: Date;
+  if (!dateInput) {
+    d = new Date();
+  } else if (typeof dateInput === 'string' && /^\d{2}\/\d{2}\/\d{2}:\d{2}\/\d{2}\/\d{2}$/.test(dateInput.trim())) {
+    return dateInput.trim();
+  } else {
+    d = new Date(dateInput);
+  }
+
+  if (isNaN(d.getTime())) {
+    d = new Date();
+  }
+
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = String(d.getFullYear()).slice(-2);
+  const hours = String(d.getHours()).padStart(2, '0');
+  const minutes = String(d.getMinutes()).padStart(2, '0');
+  const seconds = String(d.getSeconds()).padStart(2, '0');
+
+  return `${day}/${month}/${year}:${hours}/${minutes}/${seconds}`;
+}
+
+app.post('/api/sync-sheets', async (req, res) => {
     try {
       const { gasUrl, payload } = req.body;
 
@@ -635,7 +659,7 @@ async function startServer() {
 
         if (payload?.action === 'add_csi') {
           fallbackActivities.push({
-            date: payload.timestamp || new Date().toLocaleString('th-TH'),
+            date: formatInternationalDateTime(payload.timestamp),
             username: payload.site || 'PTP',
             fullName: payload.staffName || payload.dept || 'ผู้ประเมิน CSI',
             nickname: payload.dept || 'CSI',
@@ -649,7 +673,7 @@ async function startServer() {
           });
         } else if (payload?.action === 'add_vote') {
           fallbackActivities.push({
-            date: payload.timestamp || new Date().toLocaleString('th-TH'),
+            date: formatInternationalDateTime(payload.timestamp),
             username: payload.voter || 'StarVote',
             fullName: payload.voter || 'ผู้โหวต',
             nickname: payload.nominee || 'ผู้ถูกโหวต',

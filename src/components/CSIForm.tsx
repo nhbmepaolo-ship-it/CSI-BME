@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { CSIRecord, Employee } from '../types';
 import { DEPARTMENTS } from '../data/initialData';
-import { StorageService } from '../services/storage';
+import { StorageService, formatInternationalDateTime } from '../services/storage';
 
 interface CSIFormProps {
   onSuccessSubmitted: () => void;
@@ -96,7 +96,7 @@ export const CSIForm: React.FC<CSIFormProps> = ({ onSuccessSubmitted, showModal 
     const goodStaffStr = Array.from(selectedStaffKeys).join(', ');
 
     const newRecord: CSIRecord = {
-      timestamp: new Date().toISOString(),
+      timestamp: formatInternationalDateTime(),
       site: 'PTP',
       division: 'Biomedical Engineering',
       dept: selectedDept,

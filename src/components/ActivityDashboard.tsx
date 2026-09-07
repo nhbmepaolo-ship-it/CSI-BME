@@ -38,7 +38,7 @@ const CustomXAxisTickWithAvatar = (props: any) => {
   if (!item) return null;
 
   const rawUrl = item.img || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(item.name || 'user')}`;
-  const avatarUrl = getProxiedImageUrl(rawUrl);
+  const avatarUrl = rawUrl;
 
   return (
     <g transform={`translate(${x},${y})`}>
@@ -1190,7 +1190,7 @@ function handleRequest(e) {
       var csi = data.csiRecord || data;
       var sheet = ss.getSheetByName("CSI Electronic (การตอบกลับ)") || ss.getSheets()[0];
       sheet.appendRow([
-        csi.timestamp || new Date().toLocaleString("th-TH"),
+        csi.timestamp || (Utilities.formatDate(new Date(), "GMT+7", "dd/MM/yy:HH/mm/ss")),
         csi.site || "PTP",
         csi.division || "Biomedical Engineering",
         csi.dept || "",
@@ -1219,7 +1219,7 @@ function handleRequest(e) {
         sheet.appendRow(["วันที่บันทึก", "รหัสพนักงาน", "ชื่อ-นามสกุล", "ชื่อเล่น", "ตำแหน่ง", "ประเภทสัญญา", "ลักษณะสัตว์ (DISC)", "โค้ชผู้ดูแล", "W1 (ชม.)", "W2 (ชม.)", "W3 (ชม.)", "W4 (ชม.)", "W5 (ชม.)", "W6 (ชม.)", "ชั่วโมงรวม", "ความก้าวหน้า (%)"]);
       }
       sheet.appendRow([
-        new Date().toLocaleString("th-TH"),
+        (Utilities.formatDate(new Date(), "GMT+7", "dd/MM/yy:HH/mm/ss")),
         coach.empId || "",
         coach.fullName || "",
         coach.nickname || "",
@@ -1245,7 +1245,7 @@ function handleRequest(e) {
       var v = data.voteRecord || data;
       var sheet = ss.getSheetByName("Votes") || ss.getSheetByName("BME Star") || ss.getActiveSheet();
       sheet.appendRow([
-        v.timestamp || new Date().toLocaleString("th-TH"),
+        v.timestamp || (Utilities.formatDate(new Date(), "GMT+7", "dd/MM/yy:HH/mm/ss")),
         v.voter || "",
         v.nominee || "",
         v.category || "",
@@ -1270,7 +1270,7 @@ function handleRequest(e) {
 
     // Fallback
     var sheet = ss.getActiveSheet();
-    sheet.appendRow([new Date().toLocaleString("th-TH"), JSON.stringify(data)]);
+    sheet.appendRow([(Utilities.formatDate(new Date(), "GMT+7", "dd/MM/yy:HH/mm/ss")), JSON.stringify(data)]);
     return ContentService.createTextOutput(JSON.stringify({ success: true, message: "บันทึกข้อมูลเรียบร้อยแล้ว" }))
       .setMimeType(ContentService.MimeType.JSON);
 
@@ -1321,7 +1321,7 @@ function handleRequest(e) {
       var csi = data.csiRecord || data;
       var sheet = ss.getSheetByName("CSI Electronic (การตอบกลับ)") || ss.getSheets()[0];
       sheet.appendRow([
-        csi.timestamp || new Date().toLocaleString("th-TH"),
+        csi.timestamp || (Utilities.formatDate(new Date(), "GMT+7", "dd/MM/yy:HH/mm/ss")),
         csi.site || "PTP",
         csi.division || "Biomedical Engineering",
         csi.dept || "",
@@ -1350,7 +1350,7 @@ function handleRequest(e) {
         sheet.appendRow(["วันที่บันทึก", "รหัสพนักงาน", "ชื่อ-นามสกุล", "ชื่อเล่น", "ตำแหน่ง", "ประเภทสัญญา", "ลักษณะสัตว์ (DISC)", "โค้ชผู้ดูแล", "W1 (ชม.)", "W2 (ชม.)", "W3 (ชม.)", "W4 (ชม.)", "W5 (ชม.)", "W6 (ชม.)", "ชั่วโมงรวม", "ความก้าวหน้า (%)"]);
       }
       sheet.appendRow([
-        new Date().toLocaleString("th-TH"),
+        (Utilities.formatDate(new Date(), "GMT+7", "dd/MM/yy:HH/mm/ss")),
         coach.empId || "",
         coach.fullName || "",
         coach.nickname || "",
@@ -1376,7 +1376,7 @@ function handleRequest(e) {
       var v = data.voteRecord || data;
       var sheet = ss.getSheetByName("Votes") || ss.getSheetByName("BME Star") || ss.getActiveSheet();
       sheet.appendRow([
-        v.timestamp || new Date().toLocaleString("th-TH"),
+        v.timestamp || (Utilities.formatDate(new Date(), "GMT+7", "dd/MM/yy:HH/mm/ss")),
         v.voter || "",
         v.nominee || "",
         v.category || "",
@@ -1401,7 +1401,7 @@ function handleRequest(e) {
 
     // Fallback
     var sheet = ss.getActiveSheet();
-    sheet.appendRow([new Date().toLocaleString("th-TH"), JSON.stringify(data)]);
+    sheet.appendRow([(Utilities.formatDate(new Date(), "GMT+7", "dd/MM/yy:HH/mm/ss")), JSON.stringify(data)]);
     return ContentService.createTextOutput(JSON.stringify({ success: true, message: "บันทึกข้อมูลเรียบร้อยแล้ว" }))
       .setMimeType(ContentService.MimeType.JSON);
 

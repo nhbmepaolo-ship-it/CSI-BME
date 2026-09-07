@@ -87,8 +87,9 @@ export default function App() {
   };
 
   const [showLoginModal, setShowLoginModal] = useState(false);
-  const [selectedUserKey, setSelectedUserKey] = useState('');
+  const [loginUsername, setLoginUsername] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
 
   useEffect(() => {
     // Start at Default View (Guest Mode - Do not persist login session on reload)
@@ -534,7 +535,7 @@ export default function App() {
                 </div>
                 <div>
                   <h3 className="font-th font-extrabold text-lg text-white">เข้าสู่ระบบ (Login)</h3>
-                  <p className="text-[11px] text-slate-400">เลือกผู้ใช้งานหรือใส่รหัสพนักงาน/ผู้ดูแลระบบ</p>
+                  <p className="text-[11px] text-slate-400">กรอกรหัสพนักงาน/Username และรหัสผ่านเพื่อเข้าสู่ระบบ</p>
                 </div>
               </div>
               <button
@@ -545,25 +546,63 @@ export default function App() {
               </button>
             </div>
 
-            <div className="space-y-4 font-th">
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!loginUsername.trim()) {
+                  showToast('error', 'กรุณากรอกรหัสพนักงาน / Username');
+                  return;
+                }
+                const authRes = StorageService.authenticateUser(loginUsername, loginPassword);
+                if (authRes.success && authRes.user) {
+                  handleLogin(authRes.user);
+                  setShowLoginModal(false);
+                  setLoginUsername('');
+                  setLoginPassword('');
+                  showToast('success', `ยินดีต้อนรับคุณ ${authRes.user.nickname || authRes.user.fullName}`);
+                } else {
+                  showToast('error', authRes.message || 'รหัสพนักงานหรือรหัสผ่านไม่ถูกต้อง');
+                }
+              }}
+              className="space-y-4 font-th"
+            >
               <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1.5">เลือกพนักงาน / บัญชีผู้ใช้</label>
-                <select
-                  value={selectedUserKey}
-                  onChange={e => setSelectedUserKey(e.target.value)}
-                  className="w-full px-4 py-3 rounded-2xl bg-slate-950/60 border border-white/15 text-white text-xs font-bold focus:outline-none focus:border-indigo-400 transition-colors"
-                >
-                  <option value="" className="bg-slate-900 text-slate-400">-- เลือกพนักงาน / ผู้ใช้งาน --</option>
-                  {StorageService.getEmployees().map(emp => (
-                    <option key={emp.id} value={emp.username} className="bg-slate-900 text-white">
-                      {emp.username} - {emp.nickname} ({emp.fullName}) {emp.isAdmin ? '👑 [Admin]' : ''}
-                    </option>
-                  ))}
-                </select>
+                <label className="block text-xs font-bold text-slate-300 mb-1.5 flex items-center gap-1.5">
+                  <i className="fa-solid fa-id-card text-indigo-400"></i>
+                  รหัสพนักงาน / Username
+                </label>
+                <input
+                  type="text"
+                  value={loginUsername}
+                  onChange={e => setLoginUsername(e.target.value)}
+                  placeholder="เช่น 563770 หรือ MGR_BME"
+                  className="w-full px-4 py-3 rounded-2xl bg-slate-950/80 border border-white/15 text-white text-xs font-bold focus:outline-none focus:border-indigo-400 placeholder:text-slate-500 transition-colors"
+                  required
+                />
               </div>
 
-              <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1">
-                <span>บัญชี Admin หลัก: <strong className="text-amber-300 font-mono">563770</strong> / <strong className="text-amber-300 font-mono">MGR_BME</strong></span>
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1.5 flex items-center gap-1.5">
+                  <i className="fa-solid fa-key text-indigo-400"></i>
+                  รหัสผ่าน (Password)
+                </label>
+                <div className="relative">
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    value={loginPassword}
+                    onChange={e => setLoginPassword(e.target.value)}
+                    placeholder="กรอกรหัสผ่าน..."
+                    className="w-full px-4 py-3 pr-10 rounded-2xl bg-slate-950/80 border border-white/15 text-white text-xs font-bold focus:outline-none focus:border-indigo-400 placeholder:text-slate-500 transition-colors"
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white p-1 text-xs"
+                  >
+                    <i className={`fa-solid ${showPassword ? 'fa-eye-slash' : 'fa-eye'}`}></i>
+                  </button>
+                </div>
               </div>
 
               <div className="pt-2 flex items-center gap-3">
@@ -575,24 +614,14 @@ export default function App() {
                   ยกเลิก
                 </button>
                 <button
-                  type="button"
-                  onClick={() => {
-                    const employees = StorageService.getEmployees();
-                    const target = employees.find(e => e.username.toLowerCase() === selectedUserKey.toLowerCase());
-                    if (target) {
-                      handleLogin(target);
-                      setShowLoginModal(false);
-                      showToast('success', `ยินดีต้อนรับคุณ ${target.nickname || target.fullName}`);
-                    } else {
-                      showToast('error', 'กรุณาเลือกผู้ใช้งาน');
-                    }
-                  }}
-                  className="flex-1 py-3 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs shadow-lg shadow-indigo-600/30 transition-colors"
+                  type="submit"
+                  className="flex-1 py-3 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs shadow-lg shadow-indigo-600/30 transition-colors flex items-center justify-center gap-2"
                 >
+                  <i className="fa-solid fa-right-to-bracket"></i>
                   เข้าสู่ระบบ
                 </button>
               </div>
-            </div>
+            </form>
           </div>
         </div>
       )}
