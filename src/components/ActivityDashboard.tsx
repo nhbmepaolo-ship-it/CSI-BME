@@ -16,7 +16,7 @@ import {
   LabelList
 } from 'recharts';
 import { ActivityRecord, Employee, HappyLifeClub } from '../types';
-import { StorageService, FIXED_GAS_WEBHOOK_URL } from '../services/storage';
+import { StorageService, FIXED_GAS_WEBHOOK_URL, normalizeGasUrl } from '../services/storage';
 import { HAPPY_LIFE_CLUBS } from '../data/initialData';
 
 interface ActivityDashboardProps {
@@ -114,7 +114,7 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
 
   // Google Sheets Integration Modal
   const [showSheetsModal, setShowSheetsModal] = useState(false);
-  const [gasUrl, setGasUrl] = useState<string>(() => localStorage.getItem('csi_google_sheets_url') || FIXED_GAS_WEBHOOK_URL);
+  const [gasUrl, setGasUrl] = useState<string>(() => normalizeGasUrl(localStorage.getItem('csi_google_sheets_url')));
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
@@ -417,27 +417,22 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
 
   // Sync to Web App URL (Google Apps Script)
   const handleSaveGasUrl = () => {
-    if (!gasUrl.trim()) {
-      setSyncMessage({ type: 'error', text: 'กรุณาระบุ Web App URL ก่อนบันทึก' });
-      return;
-    }
-    localStorage.setItem('csi_google_sheets_url', gasUrl.trim());
+    const cleanUrl = normalizeGasUrl(gasUrl);
+    setGasUrl(cleanUrl);
+    localStorage.setItem('csi_google_sheets_url', cleanUrl);
     setSyncMessage({ type: 'success', text: 'บันทึก Google Apps Script Web App URL เรียบร้อยแล้ว! (เปิดใช้งานซิงค์อัตโนมัติแล้ว)' });
   };
 
   const handleSyncToSheets = async () => {
-    if (!gasUrl.trim()) {
-      setSyncMessage({ type: 'error', text: 'กรุณาระบุ Web App URL ของ Google Apps Script ก่อนส่งข้อมูล' });
-      return;
-    }
-
+    const cleanUrl = normalizeGasUrl(gasUrl);
+    setGasUrl(cleanUrl);
     setIsSyncing(true);
     setSyncMessage(null);
 
     try {
-      localStorage.setItem('csi_google_sheets_url', gasUrl.trim());
+      localStorage.setItem('csi_google_sheets_url', cleanUrl);
 
-      const res = await StorageService.syncToGoogleSheets(filteredActivities, gasUrl.trim());
+      const res = await StorageService.syncToGoogleSheets(filteredActivities, cleanUrl);
       setSyncMessage({
         type: res.success ? 'success' : 'error',
         text: res.message

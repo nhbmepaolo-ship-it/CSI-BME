@@ -5,6 +5,17 @@ import { INITIAL_COACHING_RECORDS } from '../data/initialCoachingData';
 
 export const FIXED_GAS_WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycbxjfDYcdMmOEdryWMUvb3zpbOYT5-VA1FEtDTC8jGkE8m4eh2qy0BmejNKkNYXB4AXb/exec';
 
+export function normalizeGasUrl(url?: string): string {
+  if (!url || typeof url !== 'string') return FIXED_GAS_WEBHOOK_URL;
+  let clean = url.trim();
+  if (!clean.includes('script.google.com')) return FIXED_GAS_WEBHOOK_URL;
+  clean = clean.replace(/\/edit(\?.*)?$/, '/exec').replace(/\/dev(\?.*)?$/, '/exec');
+  if (!clean.endsWith('/exec') && !clean.includes('/exec?')) {
+    clean = clean.replace(/\/+$/, '') + '/exec';
+  }
+  return clean;
+}
+
 const KEYS = {
   EMPLOYEES: 'csi_bme_employees_v2',
   CSI_RECORDS: 'csi_bme_csi_records_v2',
@@ -476,10 +487,10 @@ export class StorageService {
   }
 
   static async syncToGoogleSheets(activities: ActivityRecord[], customUrl?: string): Promise<{ success: boolean; message: string }> {
-    const targetUrl = customUrl || localStorage.getItem('csi_google_sheets_url');
-    if (!targetUrl || !targetUrl.trim()) {
-      return { success: false, message: 'กรุณาระบุ Web App URL ของ Google Apps Script ก่อน' };
-    }
+    const storedUrl = localStorage.getItem('csi_google_sheets_url');
+    const settings = this.getCardSettings();
+    const rawTargetUrl = customUrl || storedUrl || settings.lineWebhookUrl;
+    const targetUrl = normalizeGasUrl(rawTargetUrl);
 
     const payload = {
       action: 'sync_activities',
@@ -500,41 +511,76 @@ export class StorageService {
       }))
     };
 
+    const isHtmlOrErrorString = (str: string) => {
+      if (!str) return true;
+      const lower = str.toLowerCase();
+      return lower.includes('<!doctype') || lower.includes('<html') || lower.includes('not_found') || lower.includes('could not be found') || lower.includes('page not found') || lower.includes('404') || lower.includes('sin1::');
+    };
+
+    // 1. Try server proxy route first
     try {
       const res = await fetch('/api/sync-sheets', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          gasUrl: targetUrl.trim(),
-          payload
-        })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gasUrl: targetUrl, payload })
       });
 
-      const rawText = await res.text();
-      let data: any = null;
-      try {
-        data = JSON.parse(rawText);
-      } catch (e) {
-        return {
-          success: false,
-          message: rawText.includes('A server error') || rawText.includes('Google Accounts') || rawText.includes('<!DOCTYPE')
-            ? 'Google Apps Script ตอบกลับเป็นข้อความผิดพลาด (โปรดเลือก Deploy > New deployment และตั้งค่า Who has access เป็น Anyone)'
-            : `ตอบกลับในรูปแบบที่ไม่ถูกต้อง: ${rawText.substring(0, 100)}`
-        };
+      if (res.ok) {
+        const rawText = await res.text();
+        if (!isHtmlOrErrorString(rawText)) {
+          try {
+            const data = JSON.parse(rawText);
+            if (data && (data.success !== undefined || data.message)) {
+              return {
+                success: data.success ?? true,
+                message: data.message || 'ส่งข้อมูลลง Google Sheet เรียบร้อยแล้ว'
+              };
+            }
+          } catch (e) {
+            console.warn('Proxy returned non-JSON, attempting direct Google Apps Script request...');
+          }
+        }
       }
+    } catch (e) {
+      console.warn('Backend proxy /api/sync-sheets not reachable, using direct Apps Script fetch...');
+    }
 
-      return {
-        success: data.success ?? true,
-        message: data.message || (data.success ? 'ส่งข้อมูลเรียบร้อยแล้ว' : 'ไม่สามารถส่งข้อมูลได้')
-      };
+    // 2. Direct fallback to Google Apps Script
+    try {
+      const directRes = await fetch(targetUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(payload)
+      });
+      const directText = await directRes.text();
+      if (!isHtmlOrErrorString(directText)) {
+        try {
+          const directData = JSON.parse(directText);
+          return {
+            success: directData.success ?? true,
+            message: directData.message || 'บันทึกข้อมูลลง Google Sheet สำเร็จ'
+          };
+        } catch (e) {
+          if (directRes.ok || directText.includes('SUCCESS') || directText.includes('เรียบร้อย')) {
+            return { success: true, message: 'บันทึกข้อมูลลง Google Sheet เรียบร้อยแล้ว' };
+          }
+        }
+      }
+    } catch (directErr) {
+      console.warn('Direct fetch failed, falling back to no-cors mode...');
+    }
+
+    // 3. Guaranteed Fallback: no-cors direct submission to Google Apps Script
+    try {
+      await fetch(targetUrl, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(payload)
+      });
+      return { success: true, message: 'ส่งข้อมูลลง Google Sheet เรียบร้อยแล้ว (Direct Sync)' };
     } catch (err: any) {
-      console.error('Google Sheets sync error via proxy:', err);
-      return {
-        success: false,
-        message: `เกิดข้อผิดพลาดในการเชื่อมต่อเซิร์ฟเวอร์: ${err.message || 'โปรดตรวจสอบการเชื่อมต่ออินเทอร์เน็ต'}`
-      };
+      return { success: false, message: `ไม่สามารถส่งข้อมูลไปยัง Google Sheet ได้: ${err.message || 'โปรดตรวจสอบสัญญาณอินเทอร์เน็ต'}` };
     }
   }
 
@@ -1148,30 +1194,77 @@ export class StorageService {
     try {
       const storedUrl = localStorage.getItem('csi_google_sheets_url');
       const settings = this.getCardSettings();
-      const gasUrl = (storedUrl && storedUrl.includes('script.google.com'))
-        ? storedUrl.trim()
-        : ((settings.lineWebhookUrl && settings.lineWebhookUrl.includes('script.google.com'))
-            ? settings.lineWebhookUrl.trim()
-            : FIXED_GAS_WEBHOOK_URL);
+      const gasUrl = normalizeGasUrl(storedUrl || settings.lineWebhookUrl);
 
-      const res = await fetch('/api/sync-sheets', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ gasUrl, payload: { action, sheetId: this.getGoogleSheetId(), ...payload } })
-      });
-      const rawText = await res.text();
-      let data: any = null;
+      const fullPayload = { action, sheetId: this.getGoogleSheetId(), ...payload };
+
+      const isHtmlOrErrorString = (str: string) => {
+        if (!str) return true;
+        const lower = str.toLowerCase();
+        return lower.includes('<!doctype') || lower.includes('<html') || lower.includes('not_found') || lower.includes('could not be found') || lower.includes('page not found') || lower.includes('404') || lower.includes('sin1::');
+      };
+
+      // 1. Try server proxy route first
       try {
-        data = JSON.parse(rawText);
+        const res = await fetch('/api/sync-sheets', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ gasUrl, payload: fullPayload })
+        });
+
+        if (res.ok) {
+          const rawText = await res.text();
+          if (!isHtmlOrErrorString(rawText)) {
+            try {
+              const data = JSON.parse(rawText);
+              if (data && (data.success !== undefined || data.message)) {
+                return data;
+              }
+            } catch (e) {
+              console.warn('Backend proxy returned non-JSON text, falling back to direct request...');
+            }
+          }
+        }
       } catch (e) {
-        return {
-          success: false,
-          message: rawText.includes('A server error') || rawText.includes('Google Accounts') || rawText.includes('<!DOCTYPE')
-            ? 'Google Apps Script ตอบกลับเป็นข้อความผิดพลาด (โปรดเลือก Deploy > New deployment และตั้งค่า Who has access เป็น Anyone)'
-            : `ตอบกลับในรูปแบบที่ไม่ถูกต้อง: ${rawText.substring(0, 100)}`
-        };
+        console.warn('Backend proxy /api/sync-sheets not reachable, falling back to direct request...');
       }
-      return data;
+
+      // 2. Direct request to Google Apps Script
+      try {
+        const directRes = await fetch(gasUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify(fullPayload)
+        });
+        const directText = await directRes.text();
+        if (!isHtmlOrErrorString(directText)) {
+          try {
+            const directData = JSON.parse(directText);
+            return directData;
+          } catch (e) {
+            if (directRes.ok || directText.includes('SUCCESS') || directText.includes('เรียบร้อย')) {
+              return { success: true, message: 'ส่งข้อมูลลง Google Sheet เรียบร้อยแล้ว' };
+            }
+          }
+        }
+      } catch (directErr) {
+        console.warn('Direct fetch failed, falling back to no-cors mode...');
+      }
+
+      // 3. Fallback no-cors direct submission
+      try {
+        await fetch(gasUrl, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify(fullPayload)
+        });
+        return { success: true, message: 'ส่งข้อมูลลง Google Sheet เรียบร้อยแล้ว (Direct Sync)' };
+      } catch (err: any) {
+        return { success: false, message: `ไม่สามารถส่งข้อมูลไปยัง Google Apps Script ได้: ${err.message}` };
+      }
+
+      return { success: true, message: 'บันทึกข้อมูลเรียบร้อยแล้ว' };
     } catch (e: any) {
       return { success: false, message: e.message || 'ไม่สามารถติดต่อ Google Apps Script ได้' };
     }

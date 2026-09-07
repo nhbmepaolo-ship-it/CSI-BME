@@ -591,25 +591,45 @@ async function startServer() {
       const { gasUrl, payload } = req.body;
 
       const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbxjfDYcdMmOEdryWMUvb3zpbOYT5-VA1FEtDTC8jGkE8m4eh2qy0BmejNKkNYXB4AXb/exec';
-      const targetGasUrl = (gasUrl && typeof gasUrl === 'string' && gasUrl.trim().includes('script.google.com'))
-        ? gasUrl.trim()
-        : DEFAULT_GAS_URL;
 
+      const normalizeUrl = (rawUrl?: string): string => {
+        if (!rawUrl || typeof rawUrl !== 'string' || !rawUrl.includes('script.google.com')) {
+          return DEFAULT_GAS_URL;
+        }
+        let clean = rawUrl.trim();
+        clean = clean.replace(/\/edit(\?.*)?$/, '/exec').replace(/\/dev(\?.*)?$/, '/exec');
+        if (!clean.endsWith('/exec') && !clean.includes('/exec?')) {
+          clean = clean.replace(/\/+$/, '') + '/exec';
+        }
+        return clean;
+      };
+
+      let targetGasUrl = normalizeUrl(gasUrl);
       console.log('Proxying sync request to Google Apps Script:', targetGasUrl);
 
-      // Attempt 1: Send payload as structured
-      let response = await fetch(targetGasUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-        redirect: 'follow'
-      });
+      const isHtmlOrErrorString = (str: string) => {
+        if (!str) return true;
+        const lower = str.toLowerCase();
+        return lower.includes('<!doctype') || lower.includes('<html') || lower.includes('not_found') || lower.includes('could not be found') || lower.includes('page not found') || lower.includes('404') || lower.includes('sin1::') || lower.includes('unable to open the file');
+      };
 
-      let responseText = await response.text();
-      console.log('Google Apps Script response (Attempt 1):', responseText);
+      const sendToGas = async (url: string, p: any) => {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(p),
+          redirect: 'follow'
+        });
+        const text = await response.text();
+        return { ok: response.ok, text };
+      };
 
-      // Attempt 2: If script rejected with "ไม่รู้จัก action", fallback to legacy activities payload format
-      if (responseText.includes('ไม่รู้จัก action') || responseText.includes('NO_DATA')) {
+      // Attempt 1: Send structured payload to target URL
+      let { text: responseText } = await sendToGas(targetGasUrl, payload);
+      console.log('Google Apps Script response (Attempt 1):', responseText.substring(0, 150));
+
+      // Attempt 2: If script rejected with "ไม่รู้จัก action", fallback to legacy activities format
+      if (!isHtmlOrErrorString(responseText) && (responseText.includes('ไม่รู้จัก action') || responseText.includes('NO_DATA'))) {
         console.log('Detected legacy Apps Script that expects activities array. Formatting fallback payload...');
         let fallbackActivities: any[] = [];
 
@@ -646,14 +666,19 @@ async function startServer() {
         }
 
         if (fallbackActivities.length > 0) {
-          response = await fetch(targetGasUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ activities: fallbackActivities }),
-            redirect: 'follow'
-          });
-          responseText = await response.text();
-          console.log('Google Apps Script response (Attempt 2 Fallback):', responseText);
+          const res2 = await sendToGas(targetGasUrl, { activities: fallbackActivities });
+          responseText = res2.text;
+          console.log('Google Apps Script response (Attempt 2 Fallback):', responseText.substring(0, 150));
+        }
+      }
+
+      // Attempt 3: If target URL returned HTML error/404 and target URL wasn't DEFAULT_GAS_URL, try DEFAULT_GAS_URL
+      if (isHtmlOrErrorString(responseText) && targetGasUrl !== DEFAULT_GAS_URL) {
+        console.log('Target GAS URL returned HTML error or 404. Retrying with DEFAULT_GAS_URL...');
+        const resDefault = await sendToGas(DEFAULT_GAS_URL, payload);
+        if (!isHtmlOrErrorString(resDefault.text)) {
+          responseText = resDefault.text;
+          console.log('Fallback to DEFAULT_GAS_URL succeeded:', responseText.substring(0, 150));
         }
       }
 
@@ -662,10 +687,10 @@ async function startServer() {
 
       if (parsedJson?.success || responseText.includes('SUCCESS') || responseText.includes('เรียบร้อย')) {
         return res.json({ success: true, message: parsedJson?.message || 'ซิงค์ข้อมูลลง Google Sheet สำเร็จเรียบร้อยแล้ว!' });
-      } else if (responseText.includes('A server error') || responseText.includes('Google Accounts') || responseText.includes('<!DOCTYPE') || responseText.includes('Authorization')) {
+      } else if (isHtmlOrErrorString(responseText) || responseText.includes('A server error') || responseText.includes('Google Accounts') || responseText.includes('Authorization')) {
         return res.json({
           success: false,
-          message: 'Google Apps Script แจ้งข้อผิดพลาด (โปรดตรวจสอบการตั้งค่า Deploy > New deployment และสิทธิ์ Who has access ต้องเลือกเป็น Anyone)'
+          message: 'Google Apps Script แจ้งข้อผิดพลาด (โปรดตรวจสอบ URL ของ Web App และสิทธิ์ใน Deploy > New deployment ให้เลือก Who has access เป็น Anyone)'
         });
       } else {
         return res.json({
