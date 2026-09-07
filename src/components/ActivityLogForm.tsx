@@ -209,7 +209,7 @@ export const ActivityLogForm: React.FC<ActivityLogFormProps> = ({
                   </button>
                 </div>
                 <p className="text-[11px] text-slate-400 mt-1">
-                  * รหัสผ่านเริ่มต้นคือ <code className="text-emerald-300 font-mono bg-slate-900 px-1.5 py-0.5 rounded">123456</code> (หรือติดต่อผู้ดูแลระบบ)
+                  * รหัสผ่านตามข้อมูลพนักงาน เช่น <code className="text-emerald-300 font-mono bg-slate-900 px-1.5 py-0.5 rounded">563770@Nhealth</code> หรือ <code className="text-emerald-300 font-mono bg-slate-900 px-1.5 py-0.5 rounded">Mgr-BME</code>
                 </p>
               </div>
 

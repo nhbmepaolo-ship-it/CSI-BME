@@ -206,8 +206,21 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
           if (!currentSrc || currentSrc.startsWith('data:')) return;
 
           const proxyUrl = getProxiedImageUrl(currentSrc);
-          const res = await fetch(proxyUrl);
-          if (res.ok) {
+          let res: Response | null = null;
+          try {
+            res = await fetch(proxyUrl);
+            if (!res || !res.ok) {
+              res = await fetch(currentSrc);
+            }
+          } catch {
+            try {
+              res = await fetch(currentSrc);
+            } catch {
+              res = null;
+            }
+          }
+
+          if (res && res.ok) {
             const blob = await res.blob();
             await new Promise<void>((resolve) => {
               const reader = new FileReader();
@@ -228,46 +241,126 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
     );
   };
 
+  // Helper to clean unsupported CSS color functions and force landscape 1600px poster styling for html2canvas
+  const cleanDocForHtml2Canvas = (clonedDoc: Document) => {
+    try {
+      const unsupportedColorRegex = /(oklch|oklab|lab|lch|color-mix)\([\s\S]*?\)/gi;
+
+      const sanitizeCss = (cssText: string) => {
+        if (!cssText) return cssText;
+        return cssText.replace(unsupportedColorRegex, (m) => {
+          if (m.includes('/')) return 'rgba(30, 41, 59, 0.5)';
+          return 'rgb(30, 41, 59)';
+        });
+      };
+
+      // 1. Clean all <style> tags
+      const styleTags = Array.from(clonedDoc.getElementsByTagName('style'));
+      styleTags.forEach(style => {
+        if (style.textContent) {
+          style.textContent = sanitizeCss(style.textContent);
+        }
+      });
+
+      // 2. Clean all inline styles
+      const allElements = Array.from(clonedDoc.querySelectorAll('*')) as HTMLElement[];
+      allElements.forEach(el => {
+        const styleAttr = el.getAttribute('style');
+        if (styleAttr) {
+          el.setAttribute('style', sanitizeCss(styleAttr));
+        }
+      });
+    } catch (e) {
+      console.warn('DOM cleanup warning for html2canvas:', e);
+    }
+  };
+
+  // Capture canvas logic with full natural height expansion
+  const captureOrgChartCanvas = async (element: HTMLElement) => {
+    await prepareChartImagesForExport(element);
+
+    const targetWidth = 1500;
+
+    return await html2canvas(element, {
+      scale: 2,
+      useCORS: true,
+      allowTaint: false,
+      backgroundColor: '#eaf4fb',
+      logging: false,
+      windowWidth: 1600,
+      windowHeight: 1200,
+      scrollX: 0,
+      scrollY: 0,
+      onclone: (clonedDoc) => {
+        cleanDocForHtml2Canvas(clonedDoc);
+
+        const clonedEl = clonedDoc.getElementById('org-chart-print-area') as HTMLElement;
+        if (clonedEl) {
+          clonedEl.style.width = `${targetWidth}px`;
+          clonedEl.style.minWidth = `${targetWidth}px`;
+          clonedEl.style.maxWidth = `${targetWidth}px`;
+          clonedEl.style.height = 'auto';
+          clonedEl.style.minHeight = 'auto';
+          clonedEl.style.maxHeight = 'none';
+          clonedEl.style.overflow = 'visible';
+          clonedEl.style.position = 'relative';
+          clonedEl.style.transform = 'none';
+          clonedEl.style.margin = '0 auto';
+          clonedEl.style.padding = '32px';
+          clonedEl.style.boxSizing = 'border-box';
+          clonedEl.style.background = 'linear-gradient(135deg, #eaf4fb 0%, #f4fafe 50%, #d6ebf7 100%)';
+          clonedEl.style.color = '#0f2942';
+
+          // Unwrap and clear overflow on all parent nodes in cloned document
+          let parent = clonedEl.parentElement;
+          while (parent && parent !== clonedDoc.body) {
+            parent.style.overflow = 'visible';
+            parent.style.height = 'auto';
+            parent.style.minHeight = 'auto';
+            parent.style.maxHeight = 'none';
+            parent.style.display = 'block';
+            parent = parent.parentElement;
+          }
+
+          clonedDoc.body.style.overflow = 'visible';
+          clonedDoc.body.style.height = 'auto';
+        }
+      }
+    });
+  };
+
   // PDF Export Handler using html2canvas & jsPDF
   const handleExportPDF = async () => {
     if (!chartRef.current) return;
     setIsExporting(true);
 
     try {
-      if (showToast) showToast('success', 'กำลังแปลงรูปภาพและสร้างไฟล์ PDF ผังองค์กร BME PTP...');
+      if (showToast) showToast('success', 'กำลังสร้างไฟล์ PDF ผังองค์กร BME PTP ความละเอียดสูง...');
 
-      // Step 1: Pre-convert external images to base64 Data URLs so html2canvas never fails with CORS
-      await prepareChartImagesForExport(chartRef.current);
-
-      // Step 2: Render html2canvas
-      const canvas = await html2canvas(chartRef.current, {
-        scale: 2,
-        useCORS: true,
-        allowTaint: false,
-        backgroundColor: '#0f172a',
-        logging: false
-      });
-
+      const canvas = await captureOrgChartCanvas(chartRef.current);
       const imgData = canvas.toDataURL('image/png');
+
       const pdf = new jsPDF({
         orientation: 'landscape',
         unit: 'mm',
         format: 'a4'
       });
 
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = pdf.internal.pageSize.getHeight();
+      const pdfWidth = pdf.internal.pageSize.getWidth(); // 297mm
+      const pdfHeight = pdf.internal.pageSize.getHeight(); // 210mm
       
       const imgWidth = canvas.width;
       const imgHeight = canvas.height;
-      const ratio = Math.min(pdfWidth / imgWidth, pdfHeight / imgHeight);
 
-      const renderWidth = imgWidth * ratio;
-      const renderHeight = imgHeight * ratio;
-      const xOffset = (pdfWidth - renderWidth) / 2;
-      const yOffset = (pdfHeight - renderHeight) / 2;
+      // Fit landscape image perfectly on A4 page with 5mm margins
+      const ratio = Math.min((pdfWidth - 10) / imgWidth, (pdfHeight - 10) / imgHeight);
+      const renderW = imgWidth * ratio;
+      const renderH = imgHeight * ratio;
 
-      pdf.addImage(imgData, 'PNG', xOffset, yOffset, renderWidth, renderHeight);
+      const xOffset = (pdfWidth - renderW) / 2;
+      const yOffset = (pdfHeight - renderH) / 2;
+
+      pdf.addImage(imgData, 'PNG', xOffset, yOffset, renderW, renderH);
       pdf.save(`Organizational_Chart_BME_PTP_${new Date().toISOString().slice(0, 10)}.pdf`);
 
       if (showToast) showToast('success', 'ดาวน์โหลดไฟล์ PDF ผังองค์กรสำเร็จเรียบร้อย!');
@@ -286,14 +379,9 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
     setIsExporting(true);
 
     try {
-      await prepareChartImagesForExport(chartRef.current);
+      if (showToast) showToast('success', 'กำลังแปลงรูปภาพ PNG ความละเอียดสูง...');
 
-      const canvas = await html2canvas(chartRef.current, {
-        scale: 2,
-        useCORS: true,
-        allowTaint: false,
-        backgroundColor: '#0f172a'
-      });
+      const canvas = await captureOrgChartCanvas(chartRef.current);
 
       const link = document.createElement('a');
       link.download = `Organizational_Chart_BME_PTP_${new Date().toISOString().slice(0, 10)}.png`;
@@ -334,11 +422,11 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
     const displayPhoto = matchedEmp?.img || node.photoUrl;
 
     const badgeBg = 
-      node.badgeLevel === 'Manager' ? 'bg-emerald-600 text-white' :
-      node.badgeLevel === 'Supervisor' ? 'bg-emerald-500 text-white' :
-      node.badgeLevel === 'Senior Staff' ? 'bg-emerald-600 text-white font-extrabold' :
-      node.badgeLevel === 'Junior Staff' ? 'bg-amber-500 text-slate-950 font-bold' :
-      'bg-sky-500 text-white';
+      node.badgeLevel === 'Manager' ? 'bg-[#00c853] text-white font-black' :
+      node.badgeLevel === 'Supervisor' ? 'bg-[#00c853] text-white font-black' :
+      node.badgeLevel === 'Senior Staff' ? 'bg-[#00c853] text-white font-black' :
+      node.badgeLevel === 'Junior Staff' ? 'bg-[#ff9800] text-white font-bold' :
+      'bg-[#0288d1] text-white font-bold';
 
     return (
       <div
@@ -379,8 +467,8 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
           
           {/* Avatar Container */}
           <div className="relative mb-1">
-            <div className={`w-16 h-16 md:w-20 md:h-20 rounded-full overflow-hidden border-2 shadow-lg bg-slate-800 ${
-              isTopLevel ? 'border-sky-400 ring-4 ring-sky-500/20' : 'border-white/40'
+            <div className={`w-16 h-16 md:w-20 md:h-20 rounded-full overflow-hidden border-3 shadow-md bg-white ${
+              isTopLevel ? 'border-sky-500 ring-4 ring-sky-500/20' : 'border-white'
             }`}>
               <img
                 src={displayPhoto || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(node.fullName)}`}
@@ -394,15 +482,15 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
 
             {/* Badge Level Pill overlay top of avatar or right */}
             {node.badgeLevel && (
-              <div className={`absolute -bottom-1 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-full text-[10px] uppercase tracking-wider shadow-md whitespace-nowrap ${badgeBg}`}>
+              <div className={`absolute -bottom-1 left-1/2 -translate-x-1/2 px-3 py-0.5 rounded-full text-[10px] uppercase tracking-wider shadow-md whitespace-nowrap border border-white/60 ${badgeBg}`}>
                 {node.badgeLevel}
               </div>
             )}
           </div>
 
           {/* Name Plate Box matching image dark blue styling */}
-          <div className="mt-1 bg-[#0c2f5e] hover:bg-[#123e7a] border border-sky-400/40 rounded-xl px-3 py-1.5 shadow-md flex flex-col items-center text-center min-w-[150px] max-w-[200px] transition-colors">
-            <span className="font-th font-extrabold text-xs text-white leading-tight break-words">
+          <div className="mt-1 bg-[#0c2f5e] hover:bg-[#123e7a] border border-[#184c8a] rounded-xl px-3.5 py-1.5 shadow-md flex flex-col items-center text-center min-w-[150px] max-w-[210px] transition-colors">
+            <span className="font-th font-extrabold text-xs md:text-sm text-white leading-tight break-words">
               {node.fullName}
             </span>
             {node.nickname && (
@@ -413,33 +501,40 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
             
             {/* System Badges attached (e.g. ระบบ 2, ระบบ 5, ระบบ 6, ระบบ 7) */}
             {node.systems && node.systems.length > 0 && (
-              <div className="flex items-center justify-center gap-1 mt-1">
-                {node.systems.map(sys => (
-                  <span
-                    key={sys}
-                    className="w-5 h-5 rounded-full bg-emerald-500 text-slate-950 font-black text-[9px] flex items-center justify-center shadow border border-emerald-300"
-                    title={`ระบบ ${sys}`}
-                  >
-                    {sys}
-                  </span>
-                ))}
+              <div className="flex items-center justify-center gap-1.5 mt-1">
+                {node.systems.map(sys => {
+                  const sysBg =
+                    sys === 2 ? 'bg-[#ffca28] text-slate-900 border-amber-300' :
+                    sys === 5 ? 'bg-[#0d47a1] text-white border-blue-400' :
+                    'bg-[#2e7d32] text-white border-emerald-300';
+
+                  return (
+                    <span
+                      key={sys}
+                      className={`w-5 h-5 rounded-full font-black text-[10px] flex items-center justify-center shadow border ${sysBg}`}
+                      title={`ระบบ ${sys}`}
+                    >
+                      {sys}
+                    </span>
+                  );
+                })}
               </div>
             )}
           </div>
 
           {/* Tags & Role Badges (e.g., Research & Development, PM, CM, Inventory) */}
-          <div className="flex flex-wrap items-center justify-center gap-1 mt-1.5 max-w-[180px]">
+          <div className="flex flex-wrap items-center justify-center gap-1 mt-1.5 max-w-[190px]">
             {node.tags && node.tags.map(tag => {
               const tagBg =
-                tag.color === 'purple' ? 'bg-purple-500/30 text-purple-200 border-purple-400/40' :
-                tag.color === 'orange' || tag.color === 'amber' ? 'bg-amber-500/30 text-amber-200 border-amber-400/40' :
-                tag.color === 'cyan' ? 'bg-cyan-500/30 text-cyan-200 border-cyan-400/40' :
-                'bg-sky-500/30 text-sky-200 border-sky-400/40';
+                tag.color === 'purple' ? 'bg-[#8e24aa] text-white' :
+                tag.color === 'orange' || tag.color === 'amber' ? 'bg-[#f57c00] text-white' :
+                tag.color === 'cyan' ? 'bg-[#00acc1] text-white' :
+                'bg-[#0288d1] text-white';
 
               return (
                 <span
                   key={tag.id}
-                  className={`text-[10px] font-bold px-2 py-0.5 rounded-full border shadow-sm ${tagBg}`}
+                  className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full shadow-sm ${tagBg}`}
                 >
                   {tag.text}
                 </span>
@@ -572,40 +667,40 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
       </div>
 
       {/* Main Org Chart Visual Canvas (Designed to match BME10PTP.png poster layout) */}
-      <div className="flex-1 overflow-x-auto pb-8">
+      <div className="flex-1 overflow-x-auto pb-8 flex justify-center">
         <div
           ref={chartRef}
           id="org-chart-print-area"
           style={{ transform: `scale(${zoomScale / 100})`, transformOrigin: 'top center', transition: 'transform 0.2s ease-out' }}
-          className="min-w-[1000px] bg-gradient-to-b from-slate-900 via-slate-900 to-slate-950 border border-slate-800 rounded-3xl p-6 md:p-10 shadow-2xl relative overflow-hidden font-sans"
+          className="w-[1400px] min-w-[1400px] bg-gradient-to-br from-[#eaf4fb] via-[#f4fafe] to-[#d6ebf7] border-2 border-sky-300/80 rounded-3xl p-8 md:p-10 shadow-2xl relative overflow-hidden font-sans text-slate-800"
         >
           
           {/* Subtle Background Art Watermark */}
-          <div className="absolute top-0 right-0 w-96 h-96 bg-sky-500/5 rounded-full blur-3xl pointer-events-none"></div>
-          <div className="absolute bottom-0 left-0 w-96 h-96 bg-indigo-500/5 rounded-full blur-3xl pointer-events-none"></div>
+          <div className="absolute top-0 right-0 w-96 h-96 bg-sky-400/10 rounded-full blur-3xl pointer-events-none"></div>
+          <div className="absolute bottom-0 left-0 w-96 h-96 bg-indigo-400/10 rounded-full blur-3xl pointer-events-none"></div>
 
           {/* Top Header Banner matching Image Logo & Title */}
-          <div className="flex items-center justify-between border-b border-sky-500/20 pb-6 mb-8">
+          <div className="flex items-center justify-between border-b-2 border-sky-300/60 pb-6 mb-8 relative z-10">
             <div className="flex items-center gap-4">
-              <div className="w-16 h-16 rounded-2xl bg-white/10 p-2 border border-white/20 backdrop-blur-md flex items-center justify-center shadow-lg">
-                <i className="fa-solid fa-hospital-user text-3xl text-sky-400"></i>
+              <div className="w-16 h-16 rounded-2xl bg-white border border-sky-200 shadow-md p-2 flex items-center justify-center">
+                <i className="fa-solid fa-hospital-user text-3xl text-[#0083a8]"></i>
               </div>
               <div>
-                <h1 className="text-2xl md:text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-sky-300 via-indigo-200 to-white font-th tracking-tight">
+                <h1 className="text-2xl md:text-3xl font-black text-[#0c2f5e] font-th tracking-tight">
                   BIOMEDICAL ENGINEERING
                 </h1>
-                <p className="text-xs text-sky-300/80 font-bold tracking-widest uppercase">
+                <p className="text-xs text-[#0083a8] font-extrabold tracking-widest uppercase">
                   Medical Device Management & Services
                 </p>
               </div>
             </div>
 
             {/* Right Banner Badge matching BME10PTP.png */}
-            <div className="bg-gradient-to-r from-sky-600 to-indigo-600 text-white px-6 py-3 rounded-2xl shadow-xl border border-sky-300/30 text-right">
+            <div className="bg-gradient-to-r from-[#009beb] to-[#1162b7] text-white px-7 py-3 rounded-2xl shadow-xl border border-sky-200/50 text-right">
               <h2 className="text-xl md:text-2xl font-black font-th tracking-wide">
                 Organizational Chart
               </h2>
-              <div className="text-sm font-bold text-sky-200 font-th">
+              <div className="text-sm font-bold text-sky-100 font-th">
                 BME PTP
               </div>
             </div>
@@ -619,7 +714,7 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
               <div className="flex flex-col items-center relative">
                 {renderNodeCard(managerNode, true)}
                 {/* Connector Line down to Supervisor */}
-                <div className="w-0.5 h-8 bg-sky-500/60 mt-2"></div>
+                <div className="w-1 h-8 bg-[#10559e] mt-2"></div>
               </div>
             )}
 
@@ -628,15 +723,15 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
               <div className="flex flex-col items-center relative">
                 {renderNodeCard(supervisorNode, true)}
                 {/* Connector Line down to Branches */}
-                <div className="w-0.5 h-8 bg-sky-500/60 mt-2"></div>
+                <div className="w-1 h-8 bg-[#10559e] mt-2"></div>
               </div>
             )}
 
             {/* Horizontal Branch Connector Bar */}
-            <div className="w-[85%] h-0.5 bg-sky-500/60 relative">
-              <div className="absolute top-0 left-0 w-2 h-2 rounded-full bg-sky-400 -translate-x-1/2 -translate-y-1/2"></div>
-              <div className="absolute top-0 left-1/2 w-2 h-2 rounded-full bg-sky-400 -translate-x-1/2 -translate-y-1/2"></div>
-              <div className="absolute top-0 right-0 w-2 h-2 rounded-full bg-sky-400 translate-x-1/2 -translate-y-1/2"></div>
+            <div className="w-[85%] h-1 bg-[#10559e] relative">
+              <div className="absolute top-0 left-0 w-3 h-3 rounded-full bg-[#10559e] -translate-x-1/2 -translate-y-1/3"></div>
+              <div className="absolute top-0 left-1/2 w-3 h-3 rounded-full bg-[#10559e] -translate-x-1/2 -translate-y-1/3"></div>
+              <div className="absolute top-0 right-0 w-3 h-3 rounded-full bg-[#10559e] translate-x-1/2 -translate-y-1/3"></div>
             </div>
 
             {/* LEVEL 3: 3 Main Branches (UCC, Center, UQC) */}
@@ -647,15 +742,15 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
                 onDragOver={e => handleDragOver(e, 'ucc')}
                 onDragLeave={handleDragLeave}
                 onDrop={e => handleDrop(e, 'ucc')}
-                className={`flex flex-col items-center bg-slate-900/40 border rounded-2xl p-4 transition-all ${
+                className={`flex flex-col items-center bg-white/60 border rounded-2xl p-4 transition-all shadow-sm ${
                   dragOverBranch === 'ucc'
-                    ? 'border-sky-400 bg-sky-500/10 shadow-lg shadow-sky-500/20'
-                    : 'border-slate-800'
+                    ? 'border-sky-500 bg-sky-100/80 ring-2 ring-sky-400'
+                    : 'border-sky-200/80'
                 }`}
               >
                 {/* Branch Header Badge */}
-                <div className="bg-sky-600/30 text-sky-200 border border-sky-400/40 px-4 py-1.5 rounded-full text-xs font-black uppercase tracking-wider mb-6 shadow-md flex items-center gap-2">
-                  <i className="fa-solid fa-users text-sky-300"></i>
+                <div className="bg-[#0288d1] text-white px-5 py-1.5 rounded-full text-xs font-black uppercase tracking-wider mb-6 shadow-md flex items-center gap-2">
+                  <i className="fa-solid fa-users"></i>
                   <span>Team UCC</span>
                 </div>
 
@@ -666,7 +761,7 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
                 {isEditing && (
                   <button
                     onClick={() => handleAddNodeToBranch('ucc')}
-                    className="mt-6 px-3 py-1.5 rounded-xl text-xs font-bold bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-400/30 transition-colors flex items-center gap-1.5"
+                    className="mt-6 px-3 py-1.5 rounded-xl text-xs font-bold bg-sky-100 hover:bg-sky-200 text-sky-800 border border-sky-300 transition-colors flex items-center gap-1.5"
                   >
                     <i className="fa-solid fa-plus"></i>
                     <span>เพิ่มคนใน Team UCC</span>
@@ -679,14 +774,14 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
                 onDragOver={e => handleDragOver(e, 'center')}
                 onDragLeave={handleDragLeave}
                 onDrop={e => handleDrop(e, 'center')}
-                className={`flex flex-col items-center bg-slate-900/40 border rounded-2xl p-4 transition-all ${
+                className={`flex flex-col items-center bg-white/60 border rounded-2xl p-4 transition-all shadow-sm ${
                   dragOverBranch === 'center'
-                    ? 'border-cyan-400 bg-cyan-500/10 shadow-lg shadow-cyan-500/20'
-                    : 'border-slate-800'
+                    ? 'border-cyan-500 bg-cyan-100/80 ring-2 ring-cyan-400'
+                    : 'border-sky-200/80'
                 }`}
               >
-                <div className="bg-cyan-600/30 text-cyan-200 border border-cyan-400/40 px-4 py-1.5 rounded-full text-xs font-black uppercase tracking-wider mb-6 shadow-md flex items-center gap-2">
-                  <i className="fa-solid fa-sliders text-cyan-300"></i>
+                <div className="bg-[#0097a7] text-white px-5 py-1.5 rounded-full text-xs font-black uppercase tracking-wider mb-6 shadow-md flex items-center gap-2">
+                  <i className="fa-solid fa-sliders"></i>
                   <span>ส่วนกลาง & สินคลัง</span>
                 </div>
 
@@ -697,7 +792,7 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
                 {isEditing && (
                   <button
                     onClick={() => handleAddNodeToBranch('center')}
-                    className="mt-6 px-3 py-1.5 rounded-xl text-xs font-bold bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-400/30 transition-colors flex items-center gap-1.5"
+                    className="mt-6 px-3 py-1.5 rounded-xl text-xs font-bold bg-cyan-100 hover:bg-cyan-200 text-cyan-800 border border-cyan-300 transition-colors flex items-center gap-1.5"
                   >
                     <i className="fa-solid fa-plus"></i>
                     <span>เพิ่มคนในส่วนกลาง</span>
@@ -710,14 +805,14 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
                 onDragOver={e => handleDragOver(e, 'uqc')}
                 onDragLeave={handleDragLeave}
                 onDrop={e => handleDrop(e, 'uqc')}
-                className={`flex flex-col items-center bg-slate-900/40 border rounded-2xl p-4 transition-all ${
+                className={`flex flex-col items-center bg-white/60 border rounded-2xl p-4 transition-all shadow-sm ${
                   dragOverBranch === 'uqc'
-                    ? 'border-indigo-400 bg-indigo-500/10 shadow-lg shadow-indigo-500/20'
-                    : 'border-slate-800'
+                    ? 'border-indigo-500 bg-indigo-100/80 ring-2 ring-indigo-400'
+                    : 'border-sky-200/80'
                 }`}
               >
-                <div className="bg-indigo-600/30 text-indigo-200 border border-indigo-400/40 px-4 py-1.5 rounded-full text-xs font-black uppercase tracking-wider mb-6 shadow-md flex items-center gap-2">
-                  <i className="fa-solid fa-certificate text-indigo-300"></i>
+                <div className="bg-[#0288d1] text-white px-5 py-1.5 rounded-full text-xs font-black uppercase tracking-wider mb-6 shadow-md flex items-center gap-2">
+                  <i className="fa-solid fa-certificate"></i>
                   <span>Team UQC</span>
                 </div>
 
@@ -728,7 +823,7 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
                 {isEditing && (
                   <button
                     onClick={() => handleAddNodeToBranch('uqc')}
-                    className="mt-6 px-3 py-1.5 rounded-xl text-xs font-bold bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 border border-indigo-400/30 transition-colors flex items-center gap-1.5"
+                    className="mt-6 px-3 py-1.5 rounded-xl text-xs font-bold bg-indigo-100 hover:bg-indigo-200 text-indigo-800 border border-indigo-300 transition-colors flex items-center gap-1.5"
                   >
                     <i className="fa-solid fa-plus"></i>
                     <span>เพิ่มคนใน Team UQC</span>
@@ -741,11 +836,11 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
           </div>
 
           {/* BOTTOM SECTION: โครงสร้างการบริหารงาน 10 ระบบ (Matching BME10PTP.png) */}
-          <div className="mt-12 pt-6 border-t border-slate-800">
+          <div className="mt-12 pt-6 border-t-2 border-sky-300/80 relative z-10">
             
             {/* Systems Header Pill */}
             <div className="flex justify-center mb-6">
-              <div className="bg-gradient-to-r from-sky-500 via-indigo-500 to-purple-600 text-white font-th font-extrabold text-sm px-6 py-2 rounded-full shadow-lg border border-white/20 uppercase tracking-wide">
+              <div className="bg-gradient-to-r from-[#0288d1] via-[#1565c0] to-[#0d47a1] text-white font-th font-extrabold text-sm md:text-base px-8 py-2 rounded-full shadow-lg border border-white/40 uppercase tracking-wide">
                 โครงสร้างการบริหารงาน 10 ระบบ
               </div>
             </div>
@@ -754,15 +849,15 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
               
               {/* Category 1: Leadership & Governance */}
-              <div className="bg-slate-900/80 border border-amber-500/30 rounded-2xl p-3 flex flex-col items-center text-center shadow-lg">
-                <span className="text-xs font-extrabold text-amber-300 font-th mb-2">
+              <div className="bg-white/90 border border-amber-300 rounded-2xl p-3 flex flex-col items-center text-center shadow-md">
+                <span className="text-xs font-extrabold text-white bg-[#fb8c00] px-3 py-0.5 rounded-full font-th mb-2">
                   Leadership & Governance
                 </span>
                 <div className="flex items-center gap-2">
                   {[1, 2, 4].map(num => (
                     <span
                       key={num}
-                      className="w-8 h-8 rounded-full bg-amber-500 text-slate-950 font-black text-sm flex items-center justify-center shadow-md border border-amber-300"
+                      className="w-8 h-8 rounded-full bg-[#ffca28] text-slate-950 font-black text-sm flex items-center justify-center shadow-md border border-amber-300"
                     >
                       {num}
                     </span>
@@ -771,15 +866,15 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
               </div>
 
               {/* Category 2: Planning & Deployment */}
-              <div className="bg-slate-900/80 border border-rose-500/30 rounded-2xl p-3 flex flex-col items-center text-center shadow-lg">
-                <span className="text-xs font-extrabold text-rose-300 font-th mb-2">
+              <div className="bg-white/90 border border-rose-300 rounded-2xl p-3 flex flex-col items-center text-center shadow-md">
+                <span className="text-xs font-extrabold text-white bg-[#e53935] px-3 py-0.5 rounded-full font-th mb-2">
                   Planning & Deployment
                 </span>
                 <div className="flex items-center gap-2">
                   {[3, 9, 10].map(num => (
                     <span
                       key={num}
-                      className="w-8 h-8 rounded-full bg-rose-500 text-white font-black text-sm flex items-center justify-center shadow-md border border-rose-300"
+                      className="w-8 h-8 rounded-full bg-[#e53935] text-white font-black text-sm flex items-center justify-center shadow-md border border-rose-300"
                     >
                       {num}
                     </span>
@@ -788,15 +883,15 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
               </div>
 
               {/* Category 3: Operations & Customer Focus */}
-              <div className="bg-slate-900/80 border border-sky-500/30 rounded-2xl p-3 flex flex-col items-center text-center shadow-lg">
-                <span className="text-xs font-extrabold text-sky-300 font-th mb-2">
+              <div className="bg-white/90 border border-sky-300 rounded-2xl p-3 flex flex-col items-center text-center shadow-md">
+                <span className="text-xs font-extrabold text-white bg-[#1e88e5] px-3 py-0.5 rounded-full font-th mb-2">
                   Operations & Customer Focus
                 </span>
                 <div className="flex items-center gap-2">
                   {[5].map(num => (
                     <span
                       key={num}
-                      className="w-8 h-8 rounded-full bg-sky-500 text-white font-black text-sm flex items-center justify-center shadow-md border border-sky-300"
+                      className="w-8 h-8 rounded-full bg-[#0d47a1] text-white font-black text-sm flex items-center justify-center shadow-md border border-sky-300"
                     >
                       {num}
                     </span>
@@ -805,15 +900,15 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
               </div>
 
               {/* Category 4: Review & Improvement */}
-              <div className="bg-slate-900/80 border border-emerald-500/30 rounded-2xl p-3 flex flex-col items-center text-center shadow-lg">
-                <span className="text-xs font-extrabold text-emerald-300 font-th mb-2">
+              <div className="bg-white/90 border border-emerald-300 rounded-2xl p-3 flex flex-col items-center text-center shadow-md">
+                <span className="text-xs font-extrabold text-white bg-[#43a047] px-3 py-0.5 rounded-full font-th mb-2">
                   Review & Improvement
                 </span>
                 <div className="flex items-center gap-2">
                   {[6, 7, 8].map(num => (
                     <span
                       key={num}
-                      className="w-8 h-8 rounded-full bg-emerald-500 text-slate-950 font-black text-sm flex items-center justify-center shadow-md border border-emerald-300"
+                      className="w-8 h-8 rounded-full bg-[#2e7d32] text-white font-black text-sm flex items-center justify-center shadow-md border border-emerald-300"
                     >
                       {num}
                     </span>
@@ -824,21 +919,21 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
             </div>
 
             {/* Legend Section (Bottom Right matching image) */}
-            <div className="flex flex-wrap items-center justify-end gap-3 text-[11px] font-th font-bold text-slate-300 pt-2">
-              <div className="flex items-center gap-1.5 bg-purple-500/20 border border-purple-400/30 px-3 py-1 rounded-xl">
-                <div className="w-3 h-3 rounded-full bg-purple-400"></div>
+            <div className="flex flex-wrap items-center justify-end gap-3 text-[11px] font-th font-bold text-slate-700 pt-2">
+              <div className="flex items-center gap-1.5 bg-[#ab47bc] text-white px-3 py-1 rounded-full shadow-sm">
+                <div className="w-2.5 h-2.5 rounded-full bg-white"></div>
                 <span>แผนอนาคต</span>
               </div>
-              <div className="flex items-center gap-1.5 bg-sky-500/20 border border-sky-400/30 px-3 py-1 rounded-xl">
-                <div className="w-3 h-3 rounded-full bg-sky-400"></div>
+              <div className="flex items-center gap-1.5 bg-[#29b6f6] text-white px-3 py-1 rounded-full shadow-sm">
+                <div className="w-2.5 h-2.5 rounded-full bg-white"></div>
                 <span>แผนงานปัจจุบัน</span>
               </div>
-              <div className="flex items-center gap-1.5 bg-amber-500/20 border border-amber-400/30 px-3 py-1 rounded-xl">
-                <div className="w-3 h-3 rounded-full bg-amber-400"></div>
+              <div className="flex items-center gap-1.5 bg-[#ff9800] text-white px-3 py-1 rounded-full shadow-sm">
+                <div className="w-2.5 h-2.5 rounded-full bg-white"></div>
                 <span>Junior Staff</span>
               </div>
-              <div className="flex items-center gap-1.5 bg-emerald-500/20 border border-emerald-400/30 px-3 py-1 rounded-xl">
-                <div className="w-3 h-3 rounded-full bg-emerald-400"></div>
+              <div className="flex items-center gap-1.5 bg-[#00c853] text-white px-3 py-1 rounded-full shadow-sm">
+                <div className="w-2.5 h-2.5 rounded-full bg-white"></div>
                 <span>Senior Staff</span>
               </div>
             </div>

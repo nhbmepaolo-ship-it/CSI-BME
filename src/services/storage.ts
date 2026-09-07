@@ -186,6 +186,7 @@ export class StorageService {
         fullName: 'Supattra Kaewsuwan',
         nickname: 'เปี้ยว',
         club: 'ชมรมเดิน-วิ่ง',
+        password: '563770@Nhealth',
         img: 'https://img2.pic.in.th/BME_563770..045756.png'
       },
       'MGR_BME': {
@@ -865,7 +866,7 @@ export class StorageService {
             ...f,
             status: finalStatus,
             club: existing?.club || f.club,
-            password: existing?.password || f.password
+            password: f.password || existing?.password || '123'
           });
         });
 

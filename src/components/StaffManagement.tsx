@@ -115,7 +115,7 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ currentUser, s
       fullName: fullName.trim(),
       nickname: nickname.trim(),
       username: username.trim(),
-      password: password.trim() || '123',
+      password: password.trim() || `${username.trim()}@Nhealth`,
       img: defaultImg,
       club,
       status: 'active',
@@ -335,7 +335,7 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ currentUser, s
                 type="text"
                 value={password}
                 onChange={e => setPassword(e.target.value)}
-                placeholder="รหัสผ่าน (ค่าเริ่มต้น 123)"
+                placeholder="รหัสผ่าน (ค่าเริ่มต้น <รหัสพนักงาน>@Nhealth)"
                 className="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs font-semibold outline-none focus:border-purple-500"
               />
             </div>
