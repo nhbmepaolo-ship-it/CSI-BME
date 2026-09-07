@@ -88,33 +88,6 @@ export const ActivityLogForm: React.FC<ActivityLogFormProps> = ({
 
   const [showPassword, setShowPassword] = useState<boolean>(false);
 
-  // Quick login helper (Instant login on click)
-  const handleQuickSelectEmployee = (emp: Employee) => {
-    setLoginUsername(emp.username);
-    const pwd = emp.password || '123456';
-    setLoginPassword(pwd);
-    
-    const res = StorageService.authenticateUser(emp.username, pwd);
-    if (res.success && res.user) {
-      onLogin(res.user);
-      setSelectedUser(res.user);
-      if (res.user.club) {
-        setHappyLifeActivity(res.user.club);
-      }
-      showToast('success', `เข้าสู่ระบบสำเร็จ: ${res.user.fullName} (${res.user.nickname})`);
-      setLoginUsername('');
-      setLoginPassword('');
-    } else {
-      // Fallback direct login
-      onLogin(emp);
-      setSelectedUser(emp);
-      if (emp.club) {
-        setHappyLifeActivity(emp.club);
-      }
-      showToast('success', `เข้าสู่ระบบสำเร็จ: ${emp.fullName} (${emp.nickname})`);
-    }
-  };
-
   const handleSubmitActivity = (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -255,42 +228,6 @@ export const ActivityLogForm: React.FC<ActivityLogFormProps> = ({
                 <span>เข้าสู่ระบบเพื่อบันทึกกิจกรรม</span>
               </button>
             </form>
-
-            {/* Quick Login Helper */}
-            <div className="border-t border-white/10 pt-4 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
-                  <i className="fa-solid fa-bolt text-amber-400"></i>
-                  <span>คลิกล็อกอินด่วนทันที (ไม่ต้องพิมพ์รหัส):</span>
-                </span>
-                <span className="text-[10px] text-emerald-300 bg-emerald-500/20 px-2 py-0.5 rounded-full border border-emerald-400/30">
-                  คลิกที่ชื่อเข้าได้เลย
-                </span>
-              </div>
-              <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto pr-1">
-                {employees.map(emp => (
-                  <button
-                    key={emp.id}
-                    type="button"
-                    onClick={() => handleQuickSelectEmployee(emp)}
-                    className="p-2.5 rounded-xl bg-slate-900/90 hover:bg-emerald-600/20 border border-white/10 hover:border-emerald-400/50 text-left transition-all flex items-center gap-2.5 group"
-                  >
-                    <img
-                      src={emp.img || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(emp.nickname)}`}
-                      alt={emp.nickname}
-                      className="w-8 h-8 rounded-lg object-cover border border-emerald-400/50 group-hover:scale-105 transition-transform"
-                      onError={e => {
-                        (e.target as HTMLImageElement).src = `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(emp.nickname)}`;
-                      }}
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="text-[11px] font-bold text-white truncate group-hover:text-emerald-300">{emp.fullName} ({emp.nickname})</div>
-                      <div className="text-[9px] text-emerald-400 font-mono">ID: {emp.username}</div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
           </div>
         ) : (
           /* Activity Log Form (Authenticated) */
