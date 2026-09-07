@@ -51,6 +51,7 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
   const [addNodeBranchModal, setAddNodeBranchModal] = useState<string | null>(null);
   const [empSearch, setEmpSearch] = useState('');
   const [isExporting, setIsExporting] = useState(false);
+  const [zoomScale, setZoomScale] = useState<number>(100);
 
   const chartRef = useRef<HTMLDivElement>(null);
 
@@ -502,9 +503,40 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
           ) : (
             <div className="px-3 py-1.5 rounded-xl bg-slate-800/90 border border-slate-700 text-slate-300 text-xs flex items-center gap-2">
               <i className="fa-solid fa-lock text-amber-400"></i>
-              <span>โหมดดูอย่างเดียว (ปรับแก้ผังเฉพาะ คุณปิ้ง, คุณมิน, คุณเปี้ยว 563770)</span>
+              <span>โหมดดูอย่างเดียว (ปรับแก้ผังเฉพาะ คุณปิ๊ง, คุณมิน, คุณเปี้ยว 563770)</span>
             </div>
           )}
+
+          {/* Zoom Controls */}
+          <div className="flex items-center bg-slate-800/90 border border-white/10 rounded-xl p-1 gap-1 text-xs">
+            <button
+              type="button"
+              onClick={() => setZoomScale(s => Math.max(50, s - 10))}
+              className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-slate-700 text-slate-300 hover:text-white transition-colors"
+              title="ย่อผัง (-)"
+            >
+              <i className="fa-solid fa-minus"></i>
+            </button>
+            <span className="px-2 font-mono font-bold text-sky-300 min-w-[45px] text-center text-[11px]">
+              {zoomScale}%
+            </span>
+            <button
+              type="button"
+              onClick={() => setZoomScale(s => Math.min(150, s + 10))}
+              className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-slate-700 text-slate-300 hover:text-white transition-colors"
+              title="ขยายผัง (+)"
+            >
+              <i className="fa-solid fa-plus"></i>
+            </button>
+            <button
+              type="button"
+              onClick={() => setZoomScale(100)}
+              className="px-2 py-1 rounded-lg hover:bg-slate-700 text-[10px] font-bold text-slate-400 hover:text-white transition-colors border border-white/5"
+              title="รีเซ็ตเป็น 100%"
+            >
+              รีเซ็ต
+            </button>
+          </div>
 
           <button
             onClick={handleExportPNG}
@@ -544,6 +576,7 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
         <div
           ref={chartRef}
           id="org-chart-print-area"
+          style={{ transform: `scale(${zoomScale / 100})`, transformOrigin: 'top center', transition: 'transform 0.2s ease-out' }}
           className="min-w-[1000px] bg-gradient-to-b from-slate-900 via-slate-900 to-slate-950 border border-slate-800 rounded-3xl p-6 md:p-10 shadow-2xl relative overflow-hidden font-sans"
         >
           

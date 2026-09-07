@@ -12,7 +12,8 @@ import {
   Legend,
   AreaChart,
   Area,
-  CartesianGrid
+  CartesianGrid,
+  LabelList
 } from 'recharts';
 import { ActivityRecord, Employee, HappyLifeClub } from '../types';
 import { StorageService, FIXED_GAS_WEBHOOK_URL } from '../services/storage';
@@ -22,12 +23,22 @@ interface ActivityDashboardProps {
   currentUser: Employee | null;
 }
 
+const getProxiedImageUrl = (url?: string) => {
+  if (!url) return '';
+  if (url.startsWith('data:') || url.startsWith('blob:')) return url;
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    return `/api/image-proxy?url=${encodeURIComponent(url)}`;
+  }
+  return url;
+};
+
 const CustomXAxisTickWithAvatar = (props: any) => {
   const { x, y, payload, data } = props;
   const item = data && data[payload.index];
   if (!item) return null;
 
-  const avatarUrl = item.img || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(item.name || 'user')}`;
+  const rawUrl = item.img || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(item.name || 'user')}`;
+  const avatarUrl = getProxiedImageUrl(rawUrl);
 
   return (
     <g transform={`translate(${x},${y})`}>
@@ -305,6 +316,7 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
         fullName: e.fullName,
         hours: Number((e.totalMinutes / 60).toFixed(1)),
         minutes: e.totalMinutes,
+        img: e.img,
         club: e.club
       }));
   }, [employeeStats]);
@@ -684,6 +696,12 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
                     <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} />
                     <Tooltip content={<CustomTooltipWithPhoto />} />
                     <Bar dataKey="hours" radius={[6, 6, 0, 0]}>
+                      <LabelList
+                        dataKey="hours"
+                        position="top"
+                        formatter={(val: any) => `${val}ชม.`}
+                        style={{ fill: '#38bdf8', fontSize: '11px', fontWeight: 'bold' }}
+                      />
                       {topEmployeeChartData.map((_, index) => (
                         <Cell key={`cell-${index}`} fill={index === 0 ? '#f59e0b' : index === 1 ? '#cbd5e1' : index === 2 ? '#d97706' : '#10b981'} />
                       ))}
