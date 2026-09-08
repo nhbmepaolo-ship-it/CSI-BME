@@ -1,6 +1,0 @@
-{
-  "name": "CSI BME PTP + Vote & Happy Life Activity System",
-  "description": "ระบบประเมินความพึงพอใจ CSI BME PTP, ระบบโหวตพนักงานในดวงใจ BME Star Vote, ระบบบันทึกกิจกรรม Happy Life & HR-PTP, ระบบจัดการพนักงานและชมรม, แดชบอร์ดสรุปชั่วโมงกิจกรรม และระบบสร้างการ์ดประกาศผ่าน Telegram/Line",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
