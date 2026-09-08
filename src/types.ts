@@ -91,6 +91,7 @@ export interface CoachingRecord {
   position: string;        // Manager, Supervisor, Engineer, Admin
   fullName: string;
   nickname: string;
+  photoUrl?: string;       // รูปถ่ายพนักงาน
   animalType: AnimalDISCType;
   coachName: string;       // e.g. 'ยงยุทธ', 'ชาลี'
   topic1: string;          // เรื่องที่ Coaching ลำดับที่ 1

@@ -38,40 +38,92 @@ export function CoachingDashboard({ currentUser, showToast }: CoachingDashboardP
 
   useEffect(() => {
     loadRecords();
-    setEmployees(StorageService.getEmployees());
   }, []);
 
   const loadRecords = () => {
     const list = StorageService.getCoachingRecords();
     setRecords(list);
+    const emps = StorageService.getEmployees();
+    setEmployees(emps);
   };
 
-  // Match each coaching record to its employee photo. Primary key is the employee
-  // code (empId === username), which covers almost everyone. A couple of
-  // leadership rows use an internal HR code that differs from their login
-  // username, so we fall back to matching on the Thai nickname in that case.
-  const employeesByUsername = useMemo(() => {
-    const map: Record<string, Employee> = {};
-    employees.forEach(e => {
-      if (e.username) map[e.username.trim().toLowerCase()] = e;
-    });
-    return map;
-  }, [employees]);
+  const getProxiedImageUrl = (url?: string) => {
+    if (!url) return '';
+    if (url.startsWith('data:') || url.startsWith('blob:')) return url;
+    if (url.includes('/api/image-proxy')) return url;
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      return `/api/image-proxy?url=${encodeURIComponent(url)}`;
+    }
+    return url;
+  };
 
-  const employeesByNickname = useMemo(() => {
-    const map: Record<string, Employee> = {};
-    employees.forEach(e => {
-      if (e.nickname) map[e.nickname.trim()] = e;
-    });
-    return map;
-  }, [employees]);
+  const getEmployeePhoto = (rec: CoachingRecord): string => {
+    if (rec.photoUrl && rec.photoUrl.trim().length > 5) {
+      return rec.photoUrl;
+    }
 
-  const getEmployeePhoto = (rec: CoachingRecord): string | null => {
-    const byId = employeesByUsername[(rec.empId || '').trim().toLowerCase()];
-    if (byId && byId.img) return byId.img;
-    const byNick = employeesByNickname[(rec.nickname || '').trim()];
-    if (byNick && byNick.img) return byNick.img;
-    return null;
+    const clean = (s?: string) => (s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    const f = clean(rec.fullName);
+    const n = clean(rec.nickname);
+    const id = clean(rec.empId);
+
+    // 1. Direct verified match for BME PTP staff
+    if (f.includes('chalee') || f.includes('ชาลี') || n === 'ปิ้ง' || id === '761080') {
+      return 'https://img2.pic.in.th/S__6471704_0-removebg-preview.png';
+    }
+    if (f.includes('raschanee') || f.includes('รัชณี') || n === 'มิน' || id === '569492') {
+      return 'https://img1.pic.in.th/images/970d1e089ad78d07db702e1eab5698c6.png';
+    }
+    if (f.includes('supattra') || f.includes('สุพัตรา') || n === 'เปี้ยว' || id === '563770') {
+      return 'https://img2.pic.in.th/BME_563770..045756.png';
+    }
+    if (f.includes('suwapa') || f.includes('สุวาภา') || n === 'อ้อ' || id === '612366') {
+      return 'https://img2.pic.in.th/BME_612366..045835.png';
+    }
+    if (f.includes('aiyaret') || f.includes('ไอยเรศ') || n.includes('เป๊ก') || id === '603892') {
+      return 'https://img2.pic.in.th/BME_603892..045611.png';
+    }
+    if (f.includes('suphawat') || f.includes('ศุภวัฒน์') || n.includes('ตาล') || id === '606675') {
+      return 'https://img2.pic.in.th/BME_606675..045820.png';
+    }
+    if (f.includes('kanthida') || f.includes('กานต์ธิดา') || n.includes('แฮม') || id === '563775') {
+      return 'https://img1.pic.in.th/images/5fb2f77d94121bd37.png';
+    }
+    if (f.includes('pannapat') || f.includes('พรรณพัชร') || n.includes('อ้น') || n.includes('อ้อน') || id === '622659') {
+      return 'https://img2.pic.in.th/4447b7344aeba4742.png';
+    }
+    if (f.includes('jatasig') || f.includes('จตสิกข์') || n.includes('เอิ๊ก')) {
+      return 'https://img1.pic.in.th/images/625192.png';
+    }
+    if (f.includes('nattaporn') || f.includes('ณัฐพร') || f.includes('ณฐพร') || n.includes('นท') || n === 'ณฐ' || id === '563779') {
+      return 'https://img1.pic.in.th/images/BME_563779..045629.png';
+    }
+    if (f.includes('thaweewat') || f.includes('ทวีวัฒน์') || n.includes('ซัน') || id === '614669') {
+      return 'https://img1.pic.in.th/images/BME_614669..045936.png';
+    }
+    if (f.includes('titima') || f.includes('ฐิติมา') || n.includes('จิ๊บ') || id === '616475') {
+      return 'https://img1.pic.in.th/images/BME_616475..050052.png';
+    }
+    if (f.includes('pinmanee') || f.includes('ปิ่นมณี') || n.includes('ปิ่น')) {
+      return 'https://img2.pic.in.th/3dd5cdfa08338f7c4.png';
+    }
+    if (f.includes('salisa') || f.includes('ศลิษา') || n.includes('ษา') || id === '620331') {
+      return 'https://img1.pic.in.th/images/6596ac2053383a160.png';
+    }
+
+    // 2. Lookup in loaded employees from storage
+    const matched = employees.find(e => {
+      const eu = clean(e.username);
+      const ef = clean(e.fullName);
+      const en = clean(e.nickname);
+      return (id && eu === id) || (f && ef === f) || (n && en === n);
+    });
+
+    if (matched?.img && matched.img.trim().length > 5) {
+      return matched.img;
+    }
+
+    return `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(rec.nickname || rec.fullName || rec.empId)}&skinColor=f8d25c`;
   };
 
   const handleReset = () => {
@@ -455,7 +507,6 @@ export function CoachingDashboard({ currentUser, showToast }: CoachingDashboardP
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredRecords.map(rec => {
             const badge = getAnimalBadge(rec.animalType);
-            const photoUrl = getEmployeePhoto(rec);
 
             return (
               <div
@@ -470,28 +521,20 @@ export function CoachingDashboard({ currentUser, showToast }: CoachingDashboardP
                 <div>
                   <div className="flex items-start justify-between gap-2.5 mb-3">
                     <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                      {photoUrl ? (
+                      <div className={`w-12 h-12 rounded-xl flex items-center justify-center font-semibold text-xs shadow-md flex-shrink-0 border overflow-hidden relative ${
+                        isLight
+                          ? 'bg-slate-100 border-indigo-200'
+                          : 'bg-slate-800 border-white/20'
+                      }`}>
                         <img
-                          src={photoUrl}
+                          src={getProxiedImageUrl(getEmployeePhoto(rec))}
                           alt={rec.nickname || rec.fullName}
-                          className={`w-10 h-10 rounded-xl object-cover flex-shrink-0 border ${
-                            isLight ? 'border-indigo-200' : 'border-white/20'
-                          }`}
-                          onError={e => {
-                            // If the photo fails to load, fall back to the nickname badge
-                            const img = e.currentTarget;
-                            img.style.display = 'none';
-                            const fallback = img.nextElementSibling as HTMLElement | null;
-                            if (fallback) fallback.style.display = 'flex';
+                          crossOrigin="anonymous"
+                          className="w-full h-full object-cover"
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).src = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(rec.nickname || rec.fullName)}&skinColor=f8d25c`;
                           }}
                         />
-                      ) : null}
-                      <div className={`w-10 h-10 rounded-xl items-center justify-center font-semibold text-xs shadow-2xs flex-shrink-0 border ${
-                        isLight
-                          ? 'bg-gradient-to-br from-indigo-500 to-purple-600 text-white border-indigo-200'
-                          : 'bg-gradient-to-br from-indigo-500/20 to-purple-600/20 text-white border-white/20'
-                      }`} style={{ display: photoUrl ? 'none' : 'flex' }}>
-                        <span className="px-1 text-center truncate">{rec.nickname}</span>
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5 flex-wrap">
@@ -672,22 +715,25 @@ export function CoachingDashboard({ currentUser, showToast }: CoachingDashboardP
               <tbody className={`divide-y ${isLight ? 'divide-slate-200 text-slate-800' : 'divide-white/5 text-slate-200'}`}>
                 {filteredRecords.map((rec, idx) => {
                   const badge = getAnimalBadge(rec.animalType);
-                  const photoUrl = getEmployeePhoto(rec);
                   return (
                     <tr key={rec.id} className={`transition-colors ${isLight ? 'hover:bg-slate-50' : 'hover:bg-white/5'}`}>
                       <td className="py-3 px-3 text-center font-mono font-bold text-slate-400">{idx + 1}</td>
                       <td className="py-3 px-3 font-mono text-slate-500">{rec.empId}</td>
                       <td className={`py-3 px-3 font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>
-                        <div className="flex items-center gap-2">
-                          {photoUrl ? (
-                            <img
-                              src={photoUrl}
-                              alt={rec.nickname || rec.fullName}
-                              className={`w-7 h-7 rounded-lg object-cover flex-shrink-0 border ${isLight ? 'border-slate-200' : 'border-white/10'}`}
-                              onError={e => { e.currentTarget.style.display = 'none'; }}
-                            />
-                          ) : null}
-                          <span>{rec.fullName} <span className="text-indigo-600 font-normal">({rec.nickname})</span></span>
+                        <div className="flex items-center gap-2.5">
+                          <img
+                            src={getProxiedImageUrl(getEmployeePhoto(rec))}
+                            alt={rec.nickname || rec.fullName}
+                            crossOrigin="anonymous"
+                            className="w-8 h-8 rounded-full object-cover border border-indigo-400/40 shadow-xs flex-shrink-0"
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).src = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(rec.nickname || rec.fullName)}&skinColor=f8d25c`;
+                            }}
+                          />
+                          <div>
+                            <div className="truncate max-w-[140px] sm:max-w-none">{rec.fullName}</div>
+                            <span className="text-indigo-600 font-normal text-xs">({rec.nickname})</span>
+                          </div>
                         </div>
                       </td>
                       <td className="py-3 px-3">
@@ -874,12 +920,20 @@ export function CoachingDashboard({ currentUser, showToast }: CoachingDashboardP
               isLight ? 'border-slate-200' : 'border-white/10'
             }`}>
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-indigo-600/10 border border-indigo-400/30 flex items-center justify-center text-indigo-600 font-bold">
-                  <i className="fa-solid fa-pen-to-square"></i>
+                <div className="w-12 h-12 rounded-2xl overflow-hidden border border-indigo-400/40 shadow-md flex-shrink-0 relative">
+                  <img
+                    src={getProxiedImageUrl(editForm.photoUrl || getEmployeePhoto(editingRecord))}
+                    alt={editingRecord.nickname || editingRecord.fullName}
+                    crossOrigin="anonymous"
+                    className="w-full h-full object-cover"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).src = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(editingRecord.nickname || editingRecord.fullName)}&skinColor=f8d25c`;
+                    }}
+                  />
                 </div>
                 <div>
                   <h3 className="font-extrabold text-base">แก้ไขข้อมูล Coaching</h3>
-                  <p className="text-xs text-indigo-600 font-bold">{editingRecord.fullName} ({editingRecord.nickname})</p>
+                  <p className="text-xs text-indigo-600 font-bold">{editingRecord.fullName} ({editingRecord.nickname}) · {editingRecord.position}</p>
                 </div>
               </div>
               <button
@@ -891,6 +945,20 @@ export function CoachingDashboard({ currentUser, showToast }: CoachingDashboardP
             </div>
 
             <form onSubmit={handleSaveEdit} className="space-y-4 text-xs">
+              
+              {/* Photo URL (ลิงก์รูปภาพพนักงาน) */}
+              <div>
+                <label className="block font-bold mb-1 text-slate-700">ลิงก์รูปภาพพนักงาน (Photo URL)</label>
+                <input
+                  type="url"
+                  placeholder="https://... หรือเว้นว่างเพื่อใช้รูปโปรไฟล์ระบบ"
+                  value={editForm.photoUrl || ''}
+                  onChange={e => setEditForm({ ...editForm, photoUrl: e.target.value })}
+                  className={`w-full rounded-xl px-3 py-2 border font-medium ${
+                    isLight ? 'bg-slate-50 border-slate-300 text-slate-900' : 'bg-slate-950 border-white/10 text-white'
+                  }`}
+                />
+              </div>
               
               {/* DISC Animal Type Select */}
               <div>

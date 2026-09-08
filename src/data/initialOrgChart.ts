@@ -24,7 +24,7 @@ export const INITIAL_ORG_CHART: OrgChartConfig = {
       nickname: 'มิน',
       roleTitle: 'supervisor',
       badgeLevel: 'Supervisor',
-      photoUrl: 'https://img2.pic.in.th/S__6471705_0-removebg-preview.png',
+      photoUrl: 'https://img1.pic.in.th/images/970d1e089ad78d07db702e1eab5698c6.png',
       branchId: 'supervisor',
       order: 1
     },

@@ -204,12 +204,30 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ currentUser, s
     loadData();
   };
 
+  const handleDeleteEmployee = (emp: Employee) => {
+    if (!isSuperAdmin) {
+      showToast('error', 'สิทธิ์การลบพนักงานเฉพาะ Admin เท่านั้น');
+      return;
+    }
+    const displayName = emp.fullName || emp.nickname || emp.username;
+    if (confirm(`คุณต้องการลบข้อมูลพนักงาน "${displayName}" (User: ${emp.username}) ออกจากระบบใช่หรือไม่?`)) {
+      StorageService.deleteEmployee(emp.id, emp.username);
+      showToast('success', `ลบข้อมูลพนักงาน ${displayName} เรียบร้อยแล้ว`);
+      loadData();
+    }
+  };
+
   const filteredEmployees = employees.filter(emp => {
-    // Filter out team placeholder accounts
-    const f = (emp.fullName || '').toLowerCase();
-    const n = (emp.nickname || '').toLowerCase();
-    const u = (emp.username || '').toLowerCase();
-    if (f.includes('team') || n.includes('team') || f.includes('ทีม') || n.includes('ทีม') || u.includes('team') || u === 'emp_15') {
+    // Filter out team placeholder accounts and dummy emp accounts
+    const f = (emp.fullName || '').toLowerCase().trim();
+    const n = (emp.nickname || '').toLowerCase().trim();
+    const u = (emp.username || '').toLowerCase().trim();
+    if (
+      f.includes('team') || n.includes('team') || f.includes('ทีม') || n.includes('ทีม') || u.includes('team') ||
+      u === 'emp_15' || u === 'emp_16' || u === 'emp_17' ||
+      (!f && !n) || (f === '()' && n === '()') || (f === '-' && n === '-') ||
+      (u.startsWith('emp_') && (!f || !n))
+    ) {
       return false;
     }
 
@@ -525,22 +543,35 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ currentUser, s
                   </span>
                 )}
 
-                {/* Status Toggle Button */}
-                <button
-                  onClick={() => handleStatusToggle(emp)}
-                  disabled={!isSuperAdmin}
-                  title={!isSuperAdmin ? 'สิทธิ์เปลี่ยนสถานะการทำงานเฉพาะ Admin 3 ท่านเท่านั้น' : ''}
-                  className={`px-3 py-1.5 rounded-xl font-bold text-xs transition-all flex items-center gap-1.5 ${
-                    !isSuperAdmin ? 'opacity-70 cursor-not-allowed' : ''
-                  } ${
-                    emp.status === 'active'
-                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-rose-500/20 hover:text-rose-300 hover:border-rose-500/30'
-                      : 'bg-rose-500/20 text-rose-300 border border-rose-500/30 hover:bg-emerald-500/20 hover:text-emerald-300'
-                  }`}
-                >
-                  <span className={`w-2 h-2 rounded-full ${emp.status === 'active' ? 'bg-emerald-400' : 'bg-rose-400'}`}></span>
-                  <span>{emp.status === 'active' ? 'Active' : 'ลาออกแล้ว'}</span>
-                </button>
+                <div className="flex items-center gap-1.5">
+                  {/* Status Toggle Button */}
+                  <button
+                    onClick={() => handleStatusToggle(emp)}
+                    disabled={!isSuperAdmin}
+                    title={!isSuperAdmin ? 'สิทธิ์เปลี่ยนสถานะการทำงานเฉพาะ Admin 3 ท่านเท่านั้น' : ''}
+                    className={`px-3 py-1.5 rounded-xl font-bold text-xs transition-all flex items-center gap-1.5 ${
+                      !isSuperAdmin ? 'opacity-70 cursor-not-allowed' : ''
+                    } ${
+                      emp.status === 'active'
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-rose-500/20 hover:text-rose-300 hover:border-rose-500/30'
+                        : 'bg-rose-500/20 text-rose-300 border border-rose-500/30 hover:bg-emerald-500/20 hover:text-emerald-300'
+                    }`}
+                  >
+                    <span className={`w-2 h-2 rounded-full ${emp.status === 'active' ? 'bg-emerald-400' : 'bg-rose-400'}`}></span>
+                    <span>{emp.status === 'active' ? 'Active' : 'ลาออกแล้ว'}</span>
+                  </button>
+
+                  {/* Delete Employee Button for Super Admin */}
+                  {isSuperAdmin && !isSelf && (
+                    <button
+                      onClick={() => handleDeleteEmployee(emp)}
+                      title="ลบข้อมูลพนักงานออกจากระบบ"
+                      className="p-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 border border-rose-500/20 hover:border-rose-500/40 text-xs transition-all"
+                    >
+                      <i className="fa-solid fa-trash-can"></i>
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           );

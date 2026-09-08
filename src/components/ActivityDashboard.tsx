@@ -118,9 +118,10 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // Edit Activity Modal State (แก้ไขจำนวนชั่วโมง / วันที่เข้าร่วมกิจกรรมย้อนหลัง)
+  // Edit Activity Modal State (แก้ไขจำนวนชั่วโมง / วันที่และเวลาที่เข้าร่วมกิจกรรมย้อนหลัง)
   const [editingActivity, setEditingActivity] = useState<ActivityRecord | null>(null);
   const [editDate, setEditDate] = useState<string>('');
+  const [editTime, setEditTime] = useState<string>('12:00');
   const [editHours, setEditHours] = useState<number>(0);
   const [editMinutes, setEditMinutes] = useState<number>(0);
   const [editCategory, setEditCategory] = useState<string>('Happy Life');
@@ -134,7 +135,19 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
 
   const handleOpenEditModal = (act: ActivityRecord) => {
     setEditingActivity(act);
-    setEditDate(act.timestamp ? act.timestamp.substring(0, 10) : new Date().toISOString().substring(0, 10));
+    const d = new Date(act.timestamp);
+    if (!isNaN(d.getTime())) {
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      setEditDate(`${year}-${month}-${day}`);
+      const hoursStr = String(d.getHours()).padStart(2, '0');
+      const minsStr = String(d.getMinutes()).padStart(2, '0');
+      setEditTime(`${hoursStr}:${minsStr}`);
+    } else {
+      setEditDate(new Date().toISOString().substring(0, 10));
+      setEditTime('12:00');
+    }
     setEditHours(act.hours || 0);
     setEditMinutes(act.minutes || 0);
     setEditCategory(act.activityCategory || 'Happy Life');
@@ -151,8 +164,13 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
       return;
     }
 
+    const [hrs, mins] = (editTime || '12:00').split(':').map(Number);
+    const [y, m, d] = editDate.split('-').map(Number);
+    const combinedDate = new Date(y, m - 1, d, hrs || 0, mins || 0, 0, 0);
+    const isoTimestamp = combinedDate.toISOString();
+
     const updated = StorageService.updateActivity(editingActivity.id, {
-      timestamp: new Date(editDate + 'T12:00:00').toISOString(),
+      timestamp: isoTimestamp,
       hours: editHours,
       minutes: editMinutes,
       activityCategory: editCategory as any,
@@ -163,7 +181,7 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
     if (updated) {
       loadData();
       setEditingActivity(null);
-      alert('อัปเดตข้อมูลกิจกรรม และซิงค์ลง Google Sheet เรียบร้อยแล้ว!');
+      alert('อัปเดตวัน เวลา และข้อมูลกิจกรรมเรียบร้อยแล้ว!');
     }
   };
 
@@ -941,7 +959,14 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
                 return (
                   <tr key={act.id} className="hover:bg-white/5 transition-colors">
                     <td className="p-3 font-mono text-[11px] text-slate-300 whitespace-nowrap">
-                      {new Date(act.timestamp).toLocaleDateString('th-TH')}
+                      <div className="flex items-center gap-1.5 text-white font-semibold">
+                        <i className="fa-regular fa-calendar text-emerald-400 text-[10px]"></i>
+                        <span>{new Date(act.timestamp).toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' })}</span>
+                      </div>
+                      <div className="flex items-center gap-1 text-[10px] text-amber-300/90 font-mono mt-0.5">
+                        <i className="fa-regular fa-clock text-[9px]"></i>
+                        <span>{new Date(act.timestamp).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.</span>
+                      </div>
                     </td>
                     <td className="p-3 font-bold text-white whitespace-nowrap">
                       <div className="flex items-center gap-2">
@@ -1451,44 +1476,130 @@ function handleRequest(e) {
             </div>
 
             <form onSubmit={handleSaveEditActivity} className="space-y-4">
-              {/* Date Input */}
-              <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1">
-                  <i className="fa-solid fa-calendar text-emerald-400 mr-2"></i>วันที่เข้าร่วมกิจกรรม
-                </label>
-                <input
-                  type="date"
-                  value={editDate}
-                  onChange={e => setEditDate(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-white/20 text-white font-mono text-sm outline-none focus:border-amber-400"
-                  required
-                />
-              </div>
-
-              {/* Hours and Minutes */}
-              <div className="grid grid-cols-2 gap-3 bg-slate-950/60 p-3.5 rounded-2xl border border-white/10">
+              {/* Date and Time Inputs (แก้ไขย้อนหลังได้ทั้งวันที่และเวลา) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-950/60 p-3.5 rounded-2xl border border-white/10">
+                {/* Date */}
                 <div>
-                  <label className="block text-xs font-bold text-slate-300 mb-1">ชั่วโมง (Hours)</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                      <i className="fa-solid fa-calendar text-emerald-400"></i>
+                      <span>วันที่ทำกิจกรรม</span>
+                    </label>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setEditDate(new Date().toISOString().substring(0, 10))}
+                        className="text-[10px] text-emerald-400 hover:text-emerald-300 font-bold px-1.5 py-0.5 rounded bg-emerald-500/10 hover:bg-emerald-500/20 transition-colors"
+                      >
+                        วันนี้
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const y = new Date();
+                          y.setDate(y.getDate() - 1);
+                          setEditDate(y.toISOString().substring(0, 10));
+                        }}
+                        className="text-[10px] text-slate-400 hover:text-slate-200 font-bold px-1.5 py-0.5 rounded bg-white/5 hover:bg-white/10 transition-colors"
+                      >
+                        เมื่อวาน
+                      </button>
+                    </div>
+                  </div>
                   <input
-                    type="number"
-                    min="0"
-                    max="24"
-                    value={editHours}
-                    onChange={e => setEditHours(Math.max(0, parseInt(e.target.value) || 0))}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/20 text-white text-center font-extrabold text-base outline-none focus:border-amber-400"
+                    type="date"
+                    value={editDate}
+                    onChange={e => setEditDate(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/20 text-white font-mono text-xs outline-none focus:border-emerald-400"
+                    required
                   />
                 </div>
 
+                {/* Time */}
                 <div>
-                  <label className="block text-xs font-bold text-slate-300 mb-1">นาที (Minutes)</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                      <i className="fa-solid fa-clock text-amber-400"></i>
+                      <span>เวลาที่เริ่มทำกิจกรรม</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const now = new Date();
+                        const h = String(now.getHours()).padStart(2, '0');
+                        const m = String(now.getMinutes()).padStart(2, '0');
+                        setEditTime(`${h}:${m}`);
+                      }}
+                      className="text-[10px] text-amber-400 hover:text-amber-300 font-bold px-1.5 py-0.5 rounded bg-amber-500/10 hover:bg-amber-500/20 transition-colors"
+                    >
+                      เวลาตอนนี้
+                    </button>
+                  </div>
                   <input
-                    type="number"
-                    min="0"
-                    max="59"
-                    value={editMinutes}
-                    onChange={e => setEditMinutes(Math.max(0, Math.min(59, parseInt(e.target.value) || 0)))}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/20 text-white text-center font-extrabold text-base outline-none focus:border-amber-400"
+                    type="time"
+                    value={editTime}
+                    onChange={e => setEditTime(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/20 text-white font-mono text-xs outline-none focus:border-amber-400"
+                    required
                   />
+                </div>
+              </div>
+
+              {/* Hours and Minutes with quick presets */}
+              <div className="bg-slate-950/60 p-3.5 rounded-2xl border border-white/10 space-y-2">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-300 mb-1">ชั่วโมง (Hours)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="24"
+                      value={editHours}
+                      onChange={e => setEditHours(Math.max(0, parseInt(e.target.value) || 0))}
+                      className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/20 text-white text-center font-extrabold text-base outline-none focus:border-amber-400"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-300 mb-1">นาที (Minutes)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="59"
+                      value={editMinutes}
+                      onChange={e => setEditMinutes(Math.max(0, Math.min(59, parseInt(e.target.value) || 0)))}
+                      className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/20 text-white text-center font-extrabold text-base outline-none focus:border-amber-400"
+                    />
+                  </div>
+                </div>
+
+                {/* Quick duration presets */}
+                <div className="flex items-center gap-1.5 pt-1 flex-wrap">
+                  <span className="text-[10px] text-slate-400 font-bold mr-0.5">ลัด:</span>
+                  {[
+                    { label: '30 นาที', h: 0, m: 30 },
+                    { label: '45 นาที', h: 0, m: 45 },
+                    { label: '1 ชม.', h: 1, m: 0 },
+                    { label: '1.5 ชม.', h: 1, m: 30 },
+                    { label: '2 ชม.', h: 2, m: 0 },
+                    { label: '3 ชม.', h: 3, m: 0 },
+                  ].map((preset, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => {
+                        setEditHours(preset.h);
+                        setEditMinutes(preset.m);
+                      }}
+                      className={`text-[10px] font-bold px-2 py-0.5 rounded-lg border transition-all ${
+                        editHours === preset.h && editMinutes === preset.m
+                          ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-sm'
+                          : 'bg-white/5 hover:bg-white/10 text-slate-300 border-white/10'
+                      }`}
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
                 </div>
               </div>
 

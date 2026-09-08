@@ -13,9 +13,28 @@ async function startServer() {
   app.get('/api/image-proxy', async (req, res) => {
     try {
       let imageUrl = req.query.url as string;
-      if (!imageUrl || !imageUrl.startsWith('http')) {
+      if (!imageUrl) {
+        return res.status(400).send('Missing image URL');
+      }
+
+      // Handle nested proxy URLs
+      while (imageUrl.includes('/api/image-proxy?url=')) {
+        const parts = imageUrl.split('/api/image-proxy?url=');
+        imageUrl = decodeURIComponent(parts[parts.length - 1]);
+      }
+
+      if (!imageUrl.startsWith('http')) {
         return res.status(400).send('Invalid image URL');
       }
+
+      // Auto-heal known legacy broken pic.in.th URLs
+      imageUrl = imageUrl
+        .replace('https://img2.pic.in.th/images/BME_563770..045756.png', 'https://img2.pic.in.th/BME_563770..045756.png')
+        .replace('https://img1.pic.in.th/images/BME_603892..045611.png', 'https://img2.pic.in.th/BME_603892..045611.png')
+        .replace('https://img2.pic.in.th/images/BME_563779..045629.png', 'https://img1.pic.in.th/images/BME_563779..045629.png')
+        .replace('https://img2.pic.in.th/images/BME_606675..045820.png', 'https://img2.pic.in.th/BME_606675..045820.png')
+        .replace('https://img2.pic.in.th/images/BME_612366..045835.png', 'https://img2.pic.in.th/BME_612366..045835.png')
+        .replace('https://img2.pic.in.th/S__6471705_0-removebg-preview.png', 'https://img1.pic.in.th/images/970d1e089ad78d07db702e1eab5698c6.png');
 
       // Handle Google Drive links
       if (imageUrl.includes('drive.google.com')) {
@@ -34,10 +53,17 @@ async function startServer() {
         headers['Referer'] = 'https://pic.in.th/';
       }
 
-      let response = await fetch(imageUrl, { redirect: 'follow', headers });
+      // Encode double dots to avoid directory traversal normalization
+      const safeUrl = imageUrl.includes('..') ? imageUrl.replace(/\.\./g, '%2E%2E') : imageUrl;
+
+      let response = await fetch(safeUrl, { redirect: 'follow', headers });
 
       if (!response.ok) {
-        response = await fetch(imageUrl, { redirect: 'follow' });
+        response = await fetch(safeUrl, { redirect: 'follow' });
+      }
+
+      if (!response.ok && safeUrl !== imageUrl) {
+        response = await fetch(imageUrl, { redirect: 'follow', headers });
       }
 
       if (!response.ok) {
@@ -263,13 +289,21 @@ async function startServer() {
                     const username = (sRow[3] || `emp_${j}`).trim();
                     const password = (sRow[4] || '123').trim();
 
-                    // Skip team placeholders
-                    const isTeam = fullName.toLowerCase().includes('team') ||
+                    // Skip team placeholders or dummy/empty accounts
+                    const isTeamOrDummy = fullName.toLowerCase().includes('team') ||
                       nickname.toLowerCase().includes('team') ||
                       fullName.includes('ทีม') ||
                       nickname.includes('ทีม') ||
-                      username.toLowerCase().includes('team');
-                    if (isTeam) continue;
+                      username.toLowerCase().includes('team') ||
+                      username === 'emp_15' ||
+                      username === 'emp_16' ||
+                      username === 'emp_17';
+                    if (isTeamOrDummy) continue;
+
+                    // Must have a real name (not blank or parenthesis)
+                    if (!fullName && !nickname) continue;
+                    if (fullName === '()' || nickname === '()') continue;
+                    if (username.startsWith('emp_') && (!fullName || !nickname)) continue;
 
                     if (img && img.includes('drive.google.com')) {
                       const m = img.match(/\/d\/([a-zA-Z0-9_-]+)/) || img.match(/id=([a-zA-Z0-9_-]+)/);

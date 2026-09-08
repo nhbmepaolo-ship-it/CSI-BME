@@ -60,6 +60,26 @@ export class StorageService {
       if (data) {
         const parsed = JSON.parse(data);
         if (parsed && Array.isArray(parsed.nodes) && parsed.nodes.length > 0) {
+          let hasChanges = false;
+          parsed.nodes = parsed.nodes.map((node: any) => {
+            if (node.photoUrl) {
+              const healed = node.photoUrl
+                .replace('https://img2.pic.in.th/images/BME_563770..045756.png', 'https://img2.pic.in.th/BME_563770..045756.png')
+                .replace('https://img1.pic.in.th/images/BME_603892..045611.png', 'https://img2.pic.in.th/BME_603892..045611.png')
+                .replace('https://img2.pic.in.th/images/BME_563779..045629.png', 'https://img1.pic.in.th/images/BME_563779..045629.png')
+                .replace('https://img2.pic.in.th/images/BME_606675..045820.png', 'https://img2.pic.in.th/BME_606675..045820.png')
+                .replace('https://img2.pic.in.th/images/BME_612366..045835.png', 'https://img2.pic.in.th/BME_612366..045835.png')
+                .replace('https://img2.pic.in.th/S__6471705_0-removebg-preview.png', 'https://img1.pic.in.th/images/970d1e089ad78d07db702e1eab5698c6.png');
+              if (healed !== node.photoUrl) {
+                hasChanges = true;
+                return { ...node, photoUrl: healed };
+              }
+            }
+            return node;
+          });
+          if (hasChanges) {
+            this.saveOrgChart(parsed);
+          }
           return parsed;
         }
       }
@@ -209,13 +229,15 @@ export class StorageService {
       const cleanNick = cleanStr(emp.nickname);
       const cleanFull = cleanStr(emp.fullName);
 
-      // Filter out team placeholder accounts
+      // Filter out team placeholder accounts and dummy emp accounts
       const isTeam = cleanFull.toLowerCase().includes('team') ||
         cleanNick.toLowerCase().includes('team') ||
         cleanFull.includes('ทีม') ||
         cleanNick.includes('ทีม') ||
         (emp.username && emp.username.toLowerCase().includes('team')) ||
-        emp.username === 'emp_15';
+        emp.username === 'emp_15' ||
+        emp.username === 'emp_16' ||
+        emp.username === 'emp_17';
 
       if (isTeam) {
         hasChanges = true;
@@ -228,15 +250,16 @@ export class StorageService {
         continue;
       }
 
-      // Filter out phantom placeholder employees created from blank Google Sheet
-      // rows (auto-generated username like "emp_16", "emp_17" with no real name).
-      // These show up as duplicate-looking "0 points" cards with a generic avatar.
-      if (emp.username && /^emp_\d+$/.test(emp.username.trim()) && !cleanNick && !cleanFull) {
+      // Filter out accounts with no name or blank parentheses
+      if (!cleanNick && !cleanFull) {
         hasChanges = true;
         continue;
       }
-
-      if (!cleanNick && !cleanFull && !emp.username) {
+      if (cleanFull === '()' || cleanNick === '()' || cleanFull === '-' || cleanNick === '-') {
+        hasChanges = true;
+        continue;
+      }
+      if (emp.username?.startsWith('emp_') && (!cleanNick || !cleanFull)) {
         hasChanges = true;
         continue;
       }
@@ -257,6 +280,19 @@ export class StorageService {
       let updatedPass = emp.password;
 
       let img = emp.img;
+      if (img) {
+        const healed = img
+          .replace('https://img2.pic.in.th/images/BME_563770..045756.png', 'https://img2.pic.in.th/BME_563770..045756.png')
+          .replace('https://img1.pic.in.th/images/BME_603892..045611.png', 'https://img2.pic.in.th/BME_603892..045611.png')
+          .replace('https://img2.pic.in.th/images/BME_563779..045629.png', 'https://img1.pic.in.th/images/BME_563779..045629.png')
+          .replace('https://img2.pic.in.th/images/BME_606675..045820.png', 'https://img2.pic.in.th/BME_606675..045820.png')
+          .replace('https://img2.pic.in.th/images/BME_612366..045835.png', 'https://img2.pic.in.th/BME_612366..045835.png')
+          .replace('https://img2.pic.in.th/S__6471705_0-removebg-preview.png', 'https://img1.pic.in.th/images/970d1e089ad78d07db702e1eab5698c6.png');
+        if (healed !== img) {
+          img = healed;
+          hasChanges = true;
+        }
+      }
       if (img && img.includes('drive.google.com')) {
         const m = img.match(/\/d\/([a-zA-Z0-9_-]+)/) || img.match(/id=([a-zA-Z0-9_-]+)/);
         if (m && m[1]) {
@@ -356,6 +392,26 @@ export class StorageService {
 
     this.saveEmployees(list);
     return list[idx];
+  }
+
+  static deleteEmployee(id: string, username?: string): boolean {
+    const list = this.getEmployees();
+    const filtered = list.filter(e => e.id !== id && (!username || e.username !== username));
+    if (filtered.length === list.length) return false;
+
+    this.saveEmployees(filtered);
+
+    // Also remove from overrides if any
+    try {
+      const overrides = this.getStatusOverrides();
+      if (username) delete overrides[username.toLowerCase()];
+      delete overrides[id.toLowerCase()];
+      this.saveStatusOverrides(overrides);
+    } catch {
+      // Ignore
+    }
+
+    return true;
   }
 
   // CSI Records
@@ -1108,12 +1164,23 @@ export class StorageService {
                     }
 
                     const uUpper = username.toUpperCase();
+                    const isTeamOrDummy = fullName.toLowerCase().includes('team') ||
+                      nickname.toLowerCase().includes('team') ||
+                      fullName.includes('ทีม') ||
+                      nickname.includes('ทีม') ||
+                      username.toLowerCase().includes('team') ||
+                      username === 'emp_15' ||
+                      username === 'emp_16' ||
+                      username === 'emp_17';
+                    if (isTeamOrDummy) continue;
+
+                    // Must have valid non-empty names
+                    if (!fullName && !nickname) continue;
+                    if (fullName === '()' || nickname === '()' || fullName === '-' || nickname === '-') continue;
+                    if (username.startsWith('emp_') && (!fullName || !nickname)) continue;
+
                     const isAdmin = uUpper.includes('ADMIN') || uUpper.includes('SPV') || uUpper.includes('MGR') || uUpper === '563770';
 
-                    // Only create an employee record when the row actually has a
-                    // real name — an empty sheet row must NOT turn into a phantom
-                    // "emp_16" / "emp_17" style duplicate placeholder employee,
-                    // since `username` always has a fallback value (`emp_${j}`).
                     if (fullName || nickname) {
                       employees.push({
                         id: `sheet-emp-${username}`,

@@ -80,9 +80,75 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
     setEmployees(allEmps);
   }, []);
 
+  // Verified master photos lookup for BME employees to ensure 100% reliable image loading
+  const getVerifiedBmePhoto = (fullName: string, nickname?: string, currentPhoto?: string): string => {
+    const clean = (s?: string) => (s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    const f = clean(fullName);
+    const n = clean(nickname);
+
+    if (f.includes('chalee') || f.includes('ชาลี') || n === 'ปิ้ง') {
+      return 'https://img2.pic.in.th/S__6471704_0-removebg-preview.png';
+    }
+    if (f.includes('raschanee') || f.includes('รัชณี') || n === 'มิน') {
+      return 'https://img1.pic.in.th/images/970d1e089ad78d07db702e1eab5698c6.png';
+    }
+    if (f.includes('supattra') || f.includes('สุพัตรา') || n === 'เปี้ยว') {
+      return 'https://img2.pic.in.th/BME_563770..045756.png';
+    }
+    if (f.includes('suwapa') || f.includes('สุวาภา') || n === 'อ้อ') {
+      return 'https://img2.pic.in.th/BME_612366..045835.png';
+    }
+    if (f.includes('aiyaret') || f.includes('ไอยเรศ') || n === 'เป๊ก') {
+      return 'https://img2.pic.in.th/BME_603892..045611.png';
+    }
+    if (f.includes('suphawat') || f.includes('ศุภวัฒน์') || n === 'ลูกตาล' || n === 'ลูกตอล') {
+      return 'https://img2.pic.in.th/BME_606675..045820.png';
+    }
+    if (f.includes('kanthida') || f.includes('กานต์ธิดา') || n === 'แฮม') {
+      return 'https://img1.pic.in.th/images/5fb2f77d94121bd37.png';
+    }
+    if (f.includes('pannapat') || f.includes('พรรณพัชร') || n === 'อ้อน' || n === 'อ้น') {
+      return 'https://img2.pic.in.th/4447b7344aeba4742.png';
+    }
+    if (f.includes('jatasig') || f.includes('จตสิกข์') || n === 'เอิ๊ก') {
+      return 'https://img1.pic.in.th/images/625192.png';
+    }
+    if (f.includes('nattaporn') || f.includes('ณฐพร') || n === 'ณฐ') {
+      return 'https://img1.pic.in.th/images/BME_563779..045629.png';
+    }
+    if (f.includes('thaweewat') || f.includes('ทวีวัฒน์') || n === 'ซัน') {
+      return 'https://img1.pic.in.th/images/BME_614669..045936.png';
+    }
+    if (f.includes('titima') || f.includes('ฐิติมา') || n === 'จิ๊บ') {
+      return 'https://img1.pic.in.th/images/BME_616475..050052.png';
+    }
+    if (f.includes('pinmanee') || f.includes('ปิ่นมณี') || n === 'ปิ่น') {
+      return 'https://img2.pic.in.th/3dd5cdfa08338f7c4.png';
+    }
+    if (f.includes('salisa') || f.includes('ศลิษา') || n === 'ษา') {
+      return 'https://img1.pic.in.th/images/6596ac2053383a160.png';
+    }
+    if (f.includes('naruemol') || f.includes('นฤมล')) {
+      return 'https://api.dicebear.com/7.x/avataaars/svg?seed=Naruemol';
+    }
+
+    if (currentPhoto) {
+      return currentPhoto
+        .replace('https://img2.pic.in.th/images/BME_563770..045756.png', 'https://img2.pic.in.th/BME_563770..045756.png')
+        .replace('https://img1.pic.in.th/images/BME_603892..045611.png', 'https://img2.pic.in.th/BME_603892..045611.png')
+        .replace('https://img2.pic.in.th/images/BME_563779..045629.png', 'https://img1.pic.in.th/images/BME_563779..045629.png')
+        .replace('https://img2.pic.in.th/images/BME_606675..045820.png', 'https://img2.pic.in.th/BME_606675..045820.png')
+        .replace('https://img2.pic.in.th/images/BME_612366..045835.png', 'https://img2.pic.in.th/BME_612366..045835.png')
+        .replace('https://img2.pic.in.th/S__6471705_0-removebg-preview.png', 'https://img1.pic.in.th/images/970d1e089ad78d07db702e1eab5698c6.png');
+    }
+
+    return `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(fullName)}`;
+  };
+
   const getProxiedImageUrl = (url?: string) => {
     if (!url) return '';
     if (url.startsWith('data:') || url.startsWith('blob:')) return url;
+    if (url.includes('/api/image-proxy')) return url;
     if (url.startsWith('http://') || url.startsWith('https://')) {
       return `/api/image-proxy?url=${encodeURIComponent(url)}`;
     }
@@ -221,31 +287,67 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
     await Promise.all(
       imgs.map(async (img) => {
         try {
-          const currentSrc = img.currentSrc || img.src;
-          if (!currentSrc || currentSrc.startsWith('data:')) return;
+          if (img.src && img.src.startsWith('data:')) return;
 
-          const proxyUrl = getProxiedImageUrl(currentSrc);
-          let res: Response | null = null;
-          try {
-            res = await fetch(proxyUrl);
-            if (!res || !res.ok) {
-              res = await fetch(currentSrc);
-            }
-          } catch {
+          const currentSrc = img.currentSrc || img.src;
+          if (!currentSrc) return;
+
+          // 1. If image is already fully loaded in DOM, try direct canvas draw
+          if (img.complete && img.naturalWidth > 0) {
             try {
-              res = await fetch(currentSrc);
+              const cvs = document.createElement('canvas');
+              cvs.width = img.naturalWidth;
+              cvs.height = img.naturalHeight;
+              const ctx = cvs.getContext('2d');
+              if (ctx) {
+                ctx.drawImage(img, 0, 0);
+                const dataUrl = cvs.toDataURL('image/png');
+                if (dataUrl && dataUrl.length > 200) {
+                  img.src = dataUrl;
+                  return;
+                }
+              }
             } catch {
-              res = null;
+              // Canvas draw might fail if cross-origin tainted, proceed to fetch
             }
           }
 
-          if (res && res.ok) {
-            const blob = await res.blob();
+          // 2. Fetch via proxy or directly
+          let rawUrl = currentSrc;
+          if (currentSrc.includes('/api/image-proxy?url=')) {
+            try {
+              const u = new URL(currentSrc, window.location.origin);
+              rawUrl = u.searchParams.get('url') || currentSrc;
+            } catch {
+              rawUrl = currentSrc;
+            }
+          }
+
+          const urlsToTry = [
+            getProxiedImageUrl(rawUrl),
+            rawUrl,
+            currentSrc
+          ];
+
+          let blob: Blob | null = null;
+          for (const u of urlsToTry) {
+            try {
+              const res = await fetch(u, { mode: 'cors' });
+              if (res && res.ok) {
+                blob = await res.blob();
+                if (blob && blob.size > 0) break;
+              }
+            } catch {
+              // try next
+            }
+          }
+
+          if (blob) {
             await new Promise<void>((resolve) => {
               const reader = new FileReader();
               reader.onloadend = () => {
-                if (reader.result) {
-                  img.src = reader.result as string;
+                if (reader.result && typeof reader.result === 'string') {
+                  img.src = reader.result;
                 }
                 resolve();
               };
@@ -260,49 +362,90 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
     );
   };
 
-  // Properties we "bake" from the live (real, on-screen) computed style into the
-  // cloned export element, so the exported image uses the exact same resolved
-  // colors the person actually sees in the preview — instead of relying on
-  // html2canvas to parse Tailwind's oklch/oklab/color-mix based classes (which it
-  // cannot do, and previously fell back to fully transparent, silently dropping
-  // borders, glows, badges and text colors from the exported file).
-  const COLOR_PROPS = [
-    'color', 'background-color', 'background-image',
-    'border-top-color', 'border-right-color', 'border-bottom-color', 'border-left-color',
-    'outline-color', 'box-shadow', 'text-decoration-color', 'fill', 'stroke'
-  ];
+  // Asks the browser itself to resolve a single modern color expression
+  // (oklab(), oklch(), color-mix(), etc.) down to a plain rgb()/rgba() string
+  // that html2canvas's own CSS parser can understand.
+  const resolveColorToken = (token: string): string => {
+    try {
+      const cvs = document.createElement('canvas');
+      const ctx = cvs.getContext('2d');
+      if (ctx) {
+        ctx.fillStyle = '#000';
+        ctx.fillStyle = token;
+        const resolved = ctx.fillStyle;
+        if (resolved && !resolved.includes('oklab') && !resolved.includes('oklch') && !resolved.includes('color-mix')) {
+          return resolved;
+        }
+      }
+    } catch {
+      // ignore, fall through to transparent fallback below
+    }
+    return 'rgba(0,0,0,0)';
+  };
 
-  // Walks the live source tree and the freshly cloned tree in lockstep (they are
-  // structurally identical since the clone hasn't been mutated yet) and copies the
-  // browser's already-resolved (plain rgb/rgba) color values onto the clone so
-  // html2canvas never has to understand oklch/oklab/color-mix itself.
-  const bakeComputedColors = (sourceRoot: HTMLElement, cloneRoot: HTMLElement) => {
-    const sourceEls: Element[] = [sourceRoot, ...Array.from(sourceRoot.querySelectorAll('*'))];
-    const cloneEls: Element[] = [cloneRoot, ...Array.from(cloneRoot.querySelectorAll('*'))];
-    const len = Math.min(sourceEls.length, cloneEls.length);
+  // Finds every oklab()/oklch()/color-mix() expression in a chunk of CSS text
+  // (including one level of nesting, e.g. color-mix(in oklab, oklch(...) 20%, transparent))
+  // and replaces each with its browser-resolved plain rgb/rgba equivalent.
+  const sanitizeCssText = (text: string): string => {
+    if (!text || (!text.includes('oklab') && !text.includes('oklch') && !text.includes('color-mix'))) {
+      return text;
+    }
+    let result = text;
+    for (let pass = 0; pass < 3 && (result.includes('oklab') || result.includes('oklch') || result.includes('color-mix')); pass++) {
+      result = result.replace(/(?:oklab|oklch|color-mix)\((?:[^()]|\([^()]*\))*\)/g, match => resolveColorToken(match));
+    }
+    return result;
+  };
 
-    for (let i = 0; i < len; i++) {
-      const srcEl = sourceEls[i];
-      const cloneEl = cloneEls[i] as HTMLElement;
-      if (!srcEl || !cloneEl || !(cloneEl instanceof HTMLElement)) continue;
-
+  const sanitizeStyleRuleList = (rules: CSSRuleList) => {
+    for (let i = 0; i < rules.length; i++) {
+      const rule = rules[i] as CSSRule & { style?: CSSStyleDeclaration; cssRules?: CSSRuleList };
       try {
-        const computed = window.getComputedStyle(srcEl);
-        COLOR_PROPS.forEach(prop => {
-          const val = computed.getPropertyValue(prop);
-          if (val && val !== 'none' && !val.includes('oklab') && !val.includes('oklch') && !val.includes('color-mix')) {
-            cloneEl.style.setProperty(prop, val, 'important');
-          }
-        });
+        if (rule.style && rule.style.cssText && /oklab|oklch|color-mix/.test(rule.style.cssText)) {
+          rule.style.cssText = sanitizeCssText(rule.style.cssText);
+        }
       } catch {
-        // ignore individual element failures, rest of the tree still gets baked
+        // some rule types don't support cssText reassignment — skip them
+      }
+      try {
+        if (rule.cssRules && rule.cssRules.length) {
+          sanitizeStyleRuleList(rule.cssRules);
+        }
+      } catch {
+        // ignore
       }
     }
+  };
+
+  // The exported build serves its Tailwind CSS as an external stylesheet
+  // (<link rel="stylesheet">), not an inline <style> tag, so text-only sanitizing
+  // of <style> elements never actually reaches it. This walks every stylesheet
+  // attached to the cloned document (same-origin ones — cross-origin stylesheets
+  // like Google Fonts / Font Awesome are skipped automatically since they never
+  // contain oklab/oklch/color-mix anyway) and neutralizes it directly via the CSSOM,
+  // which is what actually prevents html2canvas's "unsupported color function" crash.
+  const sanitizeAllStylesheets = (doc: Document) => {
+    Array.from(doc.styleSheets).forEach(sheet => {
+      let rules: CSSRuleList | null = null;
+      try {
+        rules = (sheet as CSSStyleSheet).cssRules;
+      } catch {
+        return; // cross-origin stylesheet, inaccessible — safe to skip
+      }
+      if (!rules) return;
+      try {
+        sanitizeStyleRuleList(rules);
+      } catch {
+        // ignore, other stylesheets still get processed
+      }
+    });
   };
 
   // Capture canvas logic with exact visual preview match
   const captureOrgChartCanvas = async (element: HTMLElement) => {
     await prepareChartImagesForExport(element);
+
+    const targetWidth = 1500;
 
     return await html2canvas(element, {
       scale: 2,
@@ -315,25 +458,16 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
       scrollX: 0,
       scrollY: 0,
       onclone: (clonedDoc) => {
+        // Neutralize oklab/oklch/color-mix directly in every stylesheet (inline
+        // <style> AND linked <link> files) via the CSSOM so html2canvas's CSS
+        // parser never crashes on them — this is the fix for the "Attempting to
+        // parse an unsupported color function 'oklab'" export error. (The old
+        // text-only <style>-tag / inline-attribute replace never touched the
+        // production build's external CSS file, so it never actually worked.)
+        sanitizeAllStylesheets(clonedDoc);
+
         const clonedEl = clonedDoc.getElementById('org-chart-print-area') as HTMLElement;
         if (!clonedEl) return;
-
-        // 1. Bake the real, currently-rendered colors from the live chart onto the
-        // clone FIRST, so the exported poster matches the on-screen preview pixel
-        // for pixel (borders, glow blobs, badge colors, gradient background, text).
-        bakeComputedColors(element, clonedEl);
-
-        // 2. Safety net only: neutralize any oklab/oklch/color-mix declaration that
-        // slipped through unbaked (e.g. pseudo-elements) so html2canvas doesn't error.
-        const styleTags = clonedDoc.querySelectorAll('style');
-        styleTags.forEach(style => {
-          if (style.textContent) {
-            style.textContent = style.textContent
-              .replace(/oklab\([^)]+\)/g, 'rgba(0,0,0,0)')
-              .replace(/oklch\([^)]+\)/g, 'rgba(0,0,0,0)')
-              .replace(/color-mix\([^)]+\)/g, 'rgba(0,0,0,0)');
-          }
-        });
 
         // Hide edit buttons and interactive popups in export
         const buttons = clonedDoc.querySelectorAll('button');
@@ -341,10 +475,10 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
           (btn as HTMLElement).style.display = 'none';
         });
 
-        // Only reset layout/scroll constraints that are irrelevant to the visible
-        // preview (the on-screen chart already has a fixed 1400px width and its own
-        // padding via Tailwind classes — we intentionally do NOT override those, so
-        // the export keeps the exact same proportions as what is shown on screen).
+        // Set exact poster width and layout
+        clonedEl.style.width = `${targetWidth}px`;
+        clonedEl.style.minWidth = `${targetWidth}px`;
+        clonedEl.style.maxWidth = `${targetWidth}px`;
         clonedEl.style.height = 'auto';
         clonedEl.style.minHeight = 'auto';
         clonedEl.style.maxHeight = 'none';
@@ -352,7 +486,11 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
         clonedEl.style.position = 'relative';
         clonedEl.style.transform = 'none';
         clonedEl.style.margin = '0 auto';
+        clonedEl.style.padding = '32px';
         clonedEl.style.boxSizing = 'border-box';
+        clonedEl.style.background = 'linear-gradient(135deg, #eaf4fb 0%, #f4fafe 50%, #d6ebf7 100%)';
+        clonedEl.style.backgroundColor = '#eaf4fb';
+        clonedEl.style.color = '#0f2942';
 
         // Unwrap overflow parent containers
         let parent = clonedEl.parentElement;
@@ -462,11 +600,10 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
       return false;
     });
 
-    const rawPhoto = (matchedEmp?.img && matchedEmp.img.trim().length > 5) 
-      ? matchedEmp.img 
-      : (node.photoUrl && node.photoUrl.trim().length > 5) 
-        ? node.photoUrl 
-        : `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(node.fullName)}`;
+    const nodePhoto = getVerifiedBmePhoto(node.fullName, node.nickname, node.photoUrl);
+    const rawPhoto = (matchedEmp?.img && matchedEmp.img.trim().length > 5 && !matchedEmp.img.includes('images.unsplash')) 
+      ? getVerifiedBmePhoto(matchedEmp.fullName, matchedEmp.nickname, matchedEmp.img)
+      : nodePhoto;
 
     const displayPhoto = getProxiedImageUrl(rawPhoto);
 
@@ -513,55 +650,54 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
         {/* Outer Card Wrapper */}
         <div className="flex flex-col items-center">
           
-          {/* Avatar Container with Perfectly Centered Badge Overlay */}
-          <div className="relative flex flex-col items-center justify-center pb-2.5">
+          {/* Avatar Container Circle */}
+          <div
+            className="w-16 h-16 md:w-20 md:h-20 rounded-full overflow-hidden shadow-md flex items-center justify-center shrink-0"
+            style={{
+              backgroundColor: '#f8fafc',
+              borderColor: isTopLevel ? '#0288d1' : badgeBgColor,
+              borderWidth: '3px',
+              borderStyle: 'solid'
+            }}
+          >
+            <img
+              src={displayPhoto}
+              alt={node.fullName}
+              crossOrigin="anonymous"
+              className="w-full h-full object-cover object-center"
+              onError={e => {
+                const img = e.currentTarget;
+                if (rawPhoto && !img.dataset.retried) {
+                  img.dataset.retried = 'true';
+                  img.src = rawPhoto;
+                } else {
+                  img.src = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(node.fullName)}`;
+                }
+              }}
+            />
+          </div>
+
+          {/* Badge Level Pill - Perfectly spaced below avatar without any overlap */}
+          {node.badgeLevel && (
             <div
-              className="w-16 h-16 md:w-20 md:h-20 rounded-full overflow-hidden shadow-md flex items-center justify-center"
+              className="mt-1.5 z-10 px-3.5 py-0.5 rounded-full text-[10px] md:text-[11px] font-black uppercase tracking-wider shadow-sm flex items-center justify-center text-center whitespace-nowrap min-w-[94px] max-w-[136px] shrink-0"
               style={{
-                backgroundColor: '#ffffff',
-                borderColor: isTopLevel ? '#0288d1' : '#ffffff',
-                borderWidth: '3px',
+                backgroundColor: badgeBgColor,
+                color: badgeTextColor,
+                borderColor: '#ffffff',
+                borderWidth: '2px',
                 borderStyle: 'solid'
               }}
             >
-              <img
-                src={displayPhoto}
-                alt={node.fullName}
-                className="w-full h-full object-cover"
-                onError={e => {
-                  const img = e.currentTarget;
-                  if (rawPhoto && !img.dataset.retried) {
-                    img.dataset.retried = 'true';
-                    img.src = rawPhoto;
-                  } else {
-                    img.src = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(node.fullName)}`;
-                  }
-                }}
-              />
+              <span className="block text-center leading-none w-full py-0.5" style={{ color: badgeTextColor }}>
+                {node.badgeLevel}
+              </span>
             </div>
-
-            {/* Badge Level Pill - Flex centered under avatar with explicit inline styles */}
-            {node.badgeLevel && (
-              <div
-                className="absolute bottom-0 z-10 px-3 py-0.5 rounded-full text-[10px] md:text-[11px] font-black uppercase tracking-wider shadow-md flex items-center justify-center text-center whitespace-nowrap min-w-[92px] max-w-[130px]"
-                style={{
-                  backgroundColor: badgeBgColor,
-                  color: badgeTextColor,
-                  borderColor: '#ffffff',
-                  borderWidth: '2px',
-                  borderStyle: 'solid'
-                }}
-              >
-                <span className="block text-center leading-none w-full py-0.5" style={{ color: badgeTextColor }}>
-                  {node.badgeLevel}
-                </span>
-              </div>
-            )}
-          </div>
+          )}
 
           {/* Name Plate Box matching image dark blue styling */}
           <div
-            className="mt-1 rounded-xl px-3.5 py-1.5 shadow-md flex flex-col items-center justify-center text-center min-w-[155px] max-w-[210px] transition-colors"
+            className="mt-1.5 rounded-xl px-3.5 py-1.5 shadow-md flex flex-col items-center justify-center text-center min-w-[155px] max-w-[210px] transition-colors"
             style={{
               backgroundColor: '#0c2f5e',
               borderColor: '#184c8a',
@@ -1102,16 +1238,16 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
               
               {/* Category 1: Leadership & Governance */}
               <div
-                className="rounded-2xl p-3 flex flex-col items-center text-center shadow-md"
+                className="rounded-2xl p-3 flex flex-col items-center justify-between text-center shadow-md min-h-[90px]"
                 style={{ backgroundColor: '#ffffff', borderColor: '#fcd34d', borderWidth: '1px', borderStyle: 'solid' }}
               >
                 <span
-                  className="text-xs font-extrabold px-3 py-0.5 rounded-full font-th mb-2"
+                  className="text-xs font-extrabold px-3 py-1 rounded-full font-th mb-2 whitespace-nowrap"
                   style={{ backgroundColor: '#fb8c00', color: '#ffffff' }}
                 >
                   Leadership & Governance
                 </span>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 my-auto">
                   {[1, 2, 4].map(num => (
                     <span
                       key={num}
@@ -1126,16 +1262,16 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
 
               {/* Category 2: Planning & Deployment */}
               <div
-                className="rounded-2xl p-3 flex flex-col items-center text-center shadow-md"
+                className="rounded-2xl p-3 flex flex-col items-center justify-between text-center shadow-md min-h-[90px]"
                 style={{ backgroundColor: '#ffffff', borderColor: '#fda4af', borderWidth: '1px', borderStyle: 'solid' }}
               >
                 <span
-                  className="text-xs font-extrabold px-3 py-0.5 rounded-full font-th mb-2"
+                  className="text-xs font-extrabold px-3 py-1 rounded-full font-th mb-2 whitespace-nowrap"
                   style={{ backgroundColor: '#e53935', color: '#ffffff' }}
                 >
                   Planning & Deployment
                 </span>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 my-auto">
                   {[3, 9, 10].map(num => (
                     <span
                       key={num}
@@ -1150,16 +1286,16 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
 
               {/* Category 3: Operations & Customer Focus */}
               <div
-                className="rounded-2xl p-3 flex flex-col items-center text-center shadow-md"
+                className="rounded-2xl p-3 flex flex-col items-center justify-between text-center shadow-md min-h-[90px]"
                 style={{ backgroundColor: '#ffffff', borderColor: '#7dd3fc', borderWidth: '1px', borderStyle: 'solid' }}
               >
                 <span
-                  className="text-xs font-extrabold px-3 py-0.5 rounded-full font-th mb-2"
+                  className="text-xs font-extrabold px-3 py-1 rounded-full font-th mb-2 whitespace-nowrap"
                   style={{ backgroundColor: '#1e88e5', color: '#ffffff' }}
                 >
                   Operations & Customer Focus
                 </span>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 my-auto">
                   {[5].map(num => (
                     <span
                       key={num}
@@ -1174,16 +1310,16 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
 
               {/* Category 4: Review & Improvement */}
               <div
-                className="rounded-2xl p-3 flex flex-col items-center text-center shadow-md"
+                className="rounded-2xl p-3 flex flex-col items-center justify-between text-center shadow-md min-h-[90px]"
                 style={{ backgroundColor: '#ffffff', borderColor: '#6ee7b7', borderWidth: '1px', borderStyle: 'solid' }}
               >
                 <span
-                  className="text-xs font-extrabold px-3 py-0.5 rounded-full font-th mb-2"
+                  className="text-xs font-extrabold px-3 py-1 rounded-full font-th mb-2 whitespace-nowrap"
                   style={{ backgroundColor: '#43a047', color: '#ffffff' }}
                 >
                   Review & Improvement
                 </span>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 my-auto">
                   {[6, 7, 8].map(num => (
                     <span
                       key={num}
@@ -1199,22 +1335,22 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
             </div>
 
             {/* Legend Section (Bottom Right matching image) */}
-            <div className="flex flex-wrap items-center justify-end gap-3 text-[11px] font-th font-bold text-slate-700 pt-2">
-              <div className="flex items-center gap-1.5 bg-[#ab47bc] text-white px-3 py-1 rounded-full shadow-sm">
-                <div className="w-2.5 h-2.5 rounded-full bg-white"></div>
-                <span>แผนอนาคต</span>
+            <div className="flex flex-wrap items-center justify-end gap-3 text-xs font-th font-bold text-slate-700 pt-2">
+              <div className="flex items-center gap-1.5 bg-[#ab47bc] text-white px-3.5 py-1 rounded-full shadow-sm whitespace-nowrap">
+                <div className="w-2.5 h-2.5 rounded-full bg-white shrink-0"></div>
+                <span style={{ color: '#ffffff' }}>แผนอนาคต</span>
               </div>
-              <div className="flex items-center gap-1.5 bg-[#29b6f6] text-white px-3 py-1 rounded-full shadow-sm">
-                <div className="w-2.5 h-2.5 rounded-full bg-white"></div>
-                <span>แผนงานปัจจุบัน</span>
+              <div className="flex items-center gap-1.5 bg-[#29b6f6] text-white px-3.5 py-1 rounded-full shadow-sm whitespace-nowrap">
+                <div className="w-2.5 h-2.5 rounded-full bg-white shrink-0"></div>
+                <span style={{ color: '#ffffff' }}>แผนงานปัจจุบัน</span>
               </div>
-              <div className="flex items-center gap-1.5 bg-[#ff9800] text-white px-3 py-1 rounded-full shadow-sm">
-                <div className="w-2.5 h-2.5 rounded-full bg-white"></div>
-                <span>Junior Staff</span>
+              <div className="flex items-center gap-1.5 bg-[#ff9800] text-white px-3.5 py-1 rounded-full shadow-sm whitespace-nowrap">
+                <div className="w-2.5 h-2.5 rounded-full bg-white shrink-0"></div>
+                <span style={{ color: '#ffffff' }}>Junior Staff</span>
               </div>
-              <div className="flex items-center gap-1.5 bg-[#00c853] text-white px-3 py-1 rounded-full shadow-sm">
-                <div className="w-2.5 h-2.5 rounded-full bg-white"></div>
-                <span>Senior Staff</span>
+              <div className="flex items-center gap-1.5 bg-[#00c853] text-white px-3.5 py-1 rounded-full shadow-sm whitespace-nowrap">
+                <div className="w-2.5 h-2.5 rounded-full bg-white shrink-0"></div>
+                <span style={{ color: '#ffffff' }}>Senior Staff</span>
               </div>
             </div>
 

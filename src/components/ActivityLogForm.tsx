@@ -46,6 +46,10 @@ export const ActivityLogForm: React.FC<ActivityLogFormProps> = ({
   const [activityDate, setActivityDate] = useState<string>(
     new Date().toISOString().substring(0, 10)
   );
+  const [activityTime, setActivityTime] = useState<string>(() => {
+    const now = new Date();
+    return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  });
 
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -119,6 +123,10 @@ export const ActivityLogForm: React.FC<ActivityLogFormProps> = ({
     setIsSubmitting(true);
 
     setTimeout(() => {
+      const [hrsPart, minsPart] = (activityTime || '12:00').split(':').map(Number);
+      const [y, m, d] = activityDate.split('-').map(Number);
+      const combinedDate = new Date(y, m - 1, d, hrsPart || 0, minsPart || 0, 0, 0);
+
       StorageService.addActivity({
         username: targetUser.username,
         fullName: targetUser.fullName,
@@ -129,7 +137,7 @@ export const ActivityLogForm: React.FC<ActivityLogFormProps> = ({
         description: description.trim(),
         hours,
         minutes,
-        timestamp: new Date(activityDate + 'T12:00:00').toISOString()
+        timestamp: combinedDate.toISOString()
       });
 
       setIsSubmitting(false);
@@ -311,74 +319,122 @@ export const ActivityLogForm: React.FC<ActivityLogFormProps> = ({
                     <span>บันทึกย้อนหลังได้</span>
                   </span>
                 </div>
-                <input
-                  type="date"
-                  value={activityDate}
-                  max={new Date().toISOString().substring(0, 10)}
-                  onChange={e => setActivityDate(e.target.value)}
-                  className="w-full px-4 py-3 rounded-xl bg-slate-900/60 border border-white/15 text-white font-semibold text-sm outline-none focus:border-emerald-400 cursor-pointer"
-                  required
-                />
-                
-                {/* Quick Past Date Selection Buttons */}
-                <div className="flex items-center gap-1.5 flex-wrap mt-2.5">
-                  <span className="text-[10px] text-slate-400 font-bold mr-1">เลือกวันที่ด่วน:</span>
-                  <button
-                    type="button"
-                    onClick={() => setActivityDate(new Date().toISOString().substring(0, 10))}
-                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all ${
-                      activityDate === new Date().toISOString().substring(0, 10)
-                        ? 'bg-emerald-500 text-slate-950 border-emerald-300 shadow-sm'
-                        : 'bg-slate-900 text-slate-300 border-white/10 hover:border-emerald-400'
-                    }`}
-                  >
-                    วันนี้
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const d = new Date();
-                      d.setDate(d.getDate() - 1);
-                      setActivityDate(d.toISOString().substring(0, 10));
-                    }}
-                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all ${
-                      activityDate === new Date(Date.now() - 86400000).toISOString().substring(0, 10)
-                        ? 'bg-emerald-500 text-slate-950 border-emerald-300 shadow-sm'
-                        : 'bg-slate-900 text-slate-300 border-white/10 hover:border-emerald-400'
-                    }`}
-                  >
-                    เมื่อวาน
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const d = new Date();
-                      d.setDate(d.getDate() - 2);
-                      setActivityDate(d.toISOString().substring(0, 10));
-                    }}
-                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all ${
-                      activityDate === new Date(Date.now() - 86400000 * 2).toISOString().substring(0, 10)
-                        ? 'bg-emerald-500 text-slate-950 border-emerald-300 shadow-sm'
-                        : 'bg-slate-900 text-slate-300 border-white/10 hover:border-emerald-400'
-                    }`}
-                  >
-                    2 วันก่อน
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const d = new Date();
-                      d.setDate(d.getDate() - 7);
-                      setActivityDate(d.toISOString().substring(0, 10));
-                    }}
-                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all ${
-                      activityDate === new Date(Date.now() - 86400000 * 7).toISOString().substring(0, 10)
-                        ? 'bg-emerald-500 text-slate-950 border-emerald-300 shadow-sm'
-                        : 'bg-slate-900 text-slate-300 border-white/10 hover:border-emerald-400'
-                    }`}
-                  >
-                    1 สัปดาห์ก่อน
-                  </button>
+                {/* Date & Time Grid (บันทึกย้อนหลังได้ทั้งวันที่และเวลา) */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* Date Input */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                        <i className="fa-solid fa-calendar-day text-emerald-400"></i>
+                        <span>วันที่ทำกิจกรรม</span>
+                      </label>
+                      <span className="text-[10px] font-bold text-emerald-300 bg-emerald-500/20 px-2 py-0.5 rounded-full border border-emerald-400/30">
+                        ย้อนหลังได้
+                      </span>
+                    </div>
+                    <input
+                      type="date"
+                      value={activityDate}
+                      max={new Date().toISOString().substring(0, 10)}
+                      onChange={e => setActivityDate(e.target.value)}
+                      className="w-full px-4 py-2.5 rounded-xl bg-slate-900/60 border border-white/15 text-white font-semibold text-sm outline-none focus:border-emerald-400 cursor-pointer"
+                      required
+                    />
+                    
+                    {/* Quick Past Date Selection Buttons */}
+                    <div className="flex items-center gap-1.5 flex-wrap mt-2">
+                      <span className="text-[10px] text-slate-400 font-bold mr-0.5">เลือกวัน:</span>
+                      <button
+                        type="button"
+                        onClick={() => setActivityDate(new Date().toISOString().substring(0, 10))}
+                        className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition-all ${
+                          activityDate === new Date().toISOString().substring(0, 10)
+                            ? 'bg-emerald-500 text-slate-950 border-emerald-300 shadow-sm'
+                            : 'bg-slate-900 text-slate-300 border-white/10 hover:border-emerald-400'
+                        }`}
+                      >
+                        วันนี้
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const d = new Date();
+                          d.setDate(d.getDate() - 1);
+                          setActivityDate(d.toISOString().substring(0, 10));
+                        }}
+                        className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition-all ${
+                          activityDate === new Date(Date.now() - 86400000).toISOString().substring(0, 10)
+                            ? 'bg-emerald-500 text-slate-950 border-emerald-300 shadow-sm'
+                            : 'bg-slate-900 text-slate-300 border-white/10 hover:border-emerald-400'
+                        }`}
+                      >
+                        เมื่อวาน
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const d = new Date();
+                          d.setDate(d.getDate() - 2);
+                          setActivityDate(d.toISOString().substring(0, 10));
+                        }}
+                        className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition-all ${
+                          activityDate === new Date(Date.now() - 86400000 * 2).toISOString().substring(0, 10)
+                            ? 'bg-emerald-500 text-slate-950 border-emerald-300 shadow-sm'
+                            : 'bg-slate-900 text-slate-300 border-white/10 hover:border-emerald-400'
+                        }`}
+                      >
+                        2 วันก่อน
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Time Input */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                        <i className="fa-solid fa-clock text-amber-400"></i>
+                        <span>เวลาที่ทำกิจกรรม</span>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const now = new Date();
+                          const h = String(now.getHours()).padStart(2, '0');
+                          const m = String(now.getMinutes()).padStart(2, '0');
+                          setActivityTime(`${h}:${m}`);
+                        }}
+                        className="text-[10px] font-bold text-amber-300 hover:text-amber-200 bg-amber-500/20 px-2 py-0.5 rounded-full border border-amber-400/30"
+                      >
+                        เวลาตอนนี้
+                      </button>
+                    </div>
+                    <input
+                      type="time"
+                      value={activityTime}
+                      onChange={e => setActivityTime(e.target.value)}
+                      className="w-full px-4 py-2.5 rounded-xl bg-slate-900/60 border border-white/15 text-white font-semibold text-sm outline-none focus:border-amber-400 cursor-pointer"
+                      required
+                    />
+
+                    {/* Quick Time Preset Buttons */}
+                    <div className="flex items-center gap-1.5 flex-wrap mt-2">
+                      <span className="text-[10px] text-slate-400 font-bold mr-0.5">เลือกเวลา:</span>
+                      {['07:00', '12:00', '16:30', '17:30', '19:00'].map(t => (
+                        <button
+                          key={t}
+                          type="button"
+                          onClick={() => setActivityTime(t)}
+                          className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition-all ${
+                            activityTime === t
+                              ? 'bg-amber-500 text-slate-950 border-amber-300 shadow-sm'
+                              : 'bg-slate-900 text-slate-300 border-white/10 hover:border-amber-400'
+                          }`}
+                        >
+                          {t}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               </div>
 
