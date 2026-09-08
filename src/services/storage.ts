@@ -1260,6 +1260,7 @@ export class StorageService {
                       img = `https://${img}`;
                     }
 
+
                     if (!img) {
                       img = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(nickname || fullName || 'user')}&skinColor=f8d25c`;
                     }

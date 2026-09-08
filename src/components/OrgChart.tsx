@@ -532,19 +532,23 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
       const canvas = await captureOrgChartCanvas(chartRef.current);
       const imgData = canvas.toDataURL('image/png');
 
+      // A4 portrait is the default: the org chart is a tall layout, so on a
+      // landscape page it shrank to fit the 210mm height and left very wide
+      // white margins on both sides. Portrait matches the chart's shape and
+      // fills the page.
       const pdf = new jsPDF({
-        orientation: 'landscape',
+        orientation: 'portrait',
         unit: 'mm',
         format: 'a4'
       });
 
-      const pdfWidth = pdf.internal.pageSize.getWidth(); // 297mm
-      const pdfHeight = pdf.internal.pageSize.getHeight(); // 210mm
+      const pdfWidth = pdf.internal.pageSize.getWidth();  // 210mm
+      const pdfHeight = pdf.internal.pageSize.getHeight(); // 297mm
       
       const imgWidth = canvas.width;
       const imgHeight = canvas.height;
 
-      // Fit landscape image perfectly on A4 page with 5mm margins
+      // Fit the image on the A4 portrait page with 5mm margins
       const ratio = Math.min((pdfWidth - 10) / imgWidth, (pdfHeight - 10) / imgHeight);
       const renderW = imgWidth * ratio;
       const renderH = imgHeight * ratio;

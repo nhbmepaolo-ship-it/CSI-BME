@@ -112,7 +112,7 @@ export function CoachingDashboard({ currentUser, showToast }: CoachingDashboardP
       return 'https://img2.pic.in.th/4447b7344aeba4742.png';
     }
     if (f.includes('jatasig') || f.includes('จตสิกข์') || n.includes('เอิ๊ก')) {
-      return 'https://img2.pic.in.th/images/625192.png';
+      return 'https://img1.pic.in.th/images/625192.png';
     }
     if (f.includes('nattaporn') || f.includes('ณัฐพร') || f.includes('ณฐพร') || n.includes('นท') || n === 'ณฐ' || id === '563779') {
       return 'https://img1.pic.in.th/images/BME_563779..045629.png';
