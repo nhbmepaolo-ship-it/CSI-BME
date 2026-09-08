@@ -3,12 +3,24 @@ import { INITIAL_EMPLOYEES, INITIAL_CSI_RECORDS, INITIAL_VOTES, INITIAL_ACTIVITI
 import { INITIAL_ORG_CHART } from '../data/initialOrgChart';
 import { INITIAL_COACHING_RECORDS } from '../data/initialCoachingData';
 
-export const FIXED_GAS_WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycbxjfDYcdMmOEdryWMUvb3zpbOYT5-VA1FEtDTC8jGkE8m4eh2qy0BmejNKkNYXB4AXb/exec';
+export const FIXED_GAS_WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycbxYN-S1ejO-6-IWM11q84UjCcV4X6xiSPy9YgkSKichlnoyQ7RSC6xW_SW_DN1UUmoXMA/exec';
+
+// Apps Script deployments that have been replaced. A URL saved in the browser
+// (localStorage 'csi_google_sheets_url') normally wins over the value in the
+// code, so without this list a device that once saved an old deployment URL
+// would keep posting to the retired script forever — the app would look
+// correctly configured while nothing reached the sheet. Any URL matching one of
+// these is automatically upgraded to the current deployment.
+const RETIRED_GAS_URLS = [
+  'AKfycbxjfDYcdMmOEdryWMUvb3zpbOYT5-VA1FEtDTC8jGkE8m4eh2qy0BmejNKkNYXB4AXb',
+  'AKfycby_TunZUkHu_9jTuyl0W8Fa-L0IVJ4_G3rCTrxzPEkZIrxDcNpZwbpMa0ejaIUTZlaX'
+];
 
 export function normalizeGasUrl(url?: string): string {
   if (!url || typeof url !== 'string') return FIXED_GAS_WEBHOOK_URL;
   let clean = url.trim();
   if (!clean.includes('script.google.com')) return FIXED_GAS_WEBHOOK_URL;
+  if (RETIRED_GAS_URLS.some(id => clean.includes(id))) return FIXED_GAS_WEBHOOK_URL;
   clean = clean.replace(/\/edit(\?.*)?$/, '/exec').replace(/\/dev(\?.*)?$/, '/exec');
   if (!clean.endsWith('/exec') && !clean.includes('/exec?')) {
     clean = clean.replace(/\/+$/, '') + '/exec';
@@ -26,6 +38,13 @@ export function normalizeGasUrl(url?: string): string {
 // every submitted evaluation ended up stored twice — once locally and once again
 // after syncing — which is why the dashboard totals never matched the sheet.
 // Invalid dates also broke the dashboard's date filter, hiding records entirely.
+// Which sheet tab each write action appends to, so a write can be verified.
+const SHEET_TAB_FOR_ACTION: Record<string, string> = {
+  add_csi: 'CSI Electronic (การตอบกลับ)',
+  add_vote: 'Votes',
+  add_activity: 'กิจกรรม'
+};
+
 export function toCanonicalTimestamp(raw?: string): string {
   if (!raw) return '';
   const s = String(raw).trim();
@@ -649,6 +668,7 @@ export class StorageService {
       timestamp: formatInternationalDateTime(),
       totalRecords: activities.length,
       activities: activities.map(a => ({
+        id: a.id,
         date: formatInternationalDateTime(a.timestamp),
         username: a.username,
         fullName: a.fullName,
@@ -757,9 +777,16 @@ export class StorageService {
     list.unshift(newRecord);
     this.saveActivities(list);
 
-    // Auto sync new record to Google Sheets if Web App URL is configured
+    // Sync the new record to the "กิจกรรม" tab. syncToGoogleSheets sends an
+    // { activities: [...] } payload, which is the shape the Apps Script actually
+    // handles.
+    //
+    // Do NOT also call syncDataToGoogleSheet('add_activity', ...) here: the Apps
+    // Script has no 'add_activity' branch, so that call fell through to its
+    // generic fallback, which appends a raw JSON blob to whatever tab happens to
+    // be active in the spreadsheet — corrupting the CSI tab and making the data
+    // disagree with what the app shows.
     this.syncToGoogleSheets([newRecord]);
-    this.syncDataToGoogleSheet('add_activity', newRecord);
 
     return newRecord;
   }
@@ -795,9 +822,24 @@ export class StorageService {
     list[idx] = updated;
     this.saveActivities(list);
 
-    // Auto sync updated record to Google Sheets
-    this.syncToGoogleSheets([updated]);
-    this.syncDataToGoogleSheet('update_activity', updated);
+    // Send ONE well-formed update. Previously this appended a duplicate row via
+    // syncToGoogleSheets (the Apps Script can only append, so an "update" became
+    // a second row) and then added a junk fallback row via 'update_activity' —
+    // which is why activity hours in the sheet kept growing after every edit.
+    this.syncDataToGoogleSheet('update_activity', {
+      id: updated.id,
+      date: formatInternationalDateTime(updated.timestamp),
+      username: updated.username,
+      fullName: updated.fullName,
+      nickname: updated.nickname,
+      club: updated.club,
+      category: updated.activityCategory,
+      activityName: updated.activityName,
+      hours: updated.hours,
+      minutes: updated.minutes,
+      totalMinutes: updated.totalMinutes,
+      description: updated.description || ''
+    });
 
     return updated;
   }
@@ -856,7 +898,7 @@ export class StorageService {
     const defaultToken = 'wg1swtQ3O2KBtBTa461HHn9gRzygFKVYykKBWUI3F4IPSk7HnbXNz+/3zn05pBnfVYvj3K+rz9FF1Hi+ZUXWShiuf1yEzRdNOVjsp6xOB1cPdhzSSxHQr/VrZYWn1I8HOsD9aP3zs0Npg8DRyfekYwdB04t89/1O/w1cDnyilFU=';
     const defaultGroupId = 'C1f1109f61de6683b2337dfa8d3a5ba4d';
     const defaultUserId = 'Ucbf8c9e32fc2606a570a51bbc595d5e9';
-    const defaultWebhook = 'https://script.google.com/macros/s/AKfycby_TunZUkHu_9jTuyl0W8Fa-L0IVJ4_G3rCTrxzPEkZIrxDcNpZwbpMa0ejaIUTZlaX/exec';
+    const defaultWebhook = 'https://script.google.com/macros/s/AKfycbxYN-S1ejO-6-IWM11q84UjCcV4X6xiSPy9YgkSKichlnoyQ7RSC6xW_SW_DN1UUmoXMA/exec';
 
     if (data) {
       try {
@@ -929,30 +971,18 @@ export class StorageService {
       const fetchedEmp: Employee[] = data.employees || [];
 
       if (fetchedCsi.length > 0) {
-        const existing = this.getCSIRecords();
-
         // Identify a response by its actual content. The timestamp is compared
         // in canonical form so a record saved by the in-app form and the same
         // record read back from the sheet are recognised as ONE response.
         const keyOf = (r: CSIRecord) =>
           `${toCanonicalTimestamp(r.timestamp)}_${r.dept}_${r.staffName}`;
 
-        // Keep only local records that are NOT present in the sheet, so rows
-        // edited or removed in the sheet stop lingering in the app, and the
-        // sheet stays the source of truth. Records the user added offline (not
-        // yet in the sheet) are still preserved.
-        const fetchedKeys = new Set(fetchedCsi.map(keyOf));
-        const localOnly = existing.filter(r => !fetchedKeys.has(keyOf(r)));
-
-        // Drop the built-in demo rows once real sheet data exists — otherwise
-        // they permanently inflate the totals and department list.
-        const initialKeys = new Set(INITIAL_CSI_RECORDS.map(keyOf));
-        const localReal = localOnly.filter(r => !initialKeys.has(keyOf(r)));
-
-        // Final safety net: collapse any duplicates that earlier versions of
-        // this sync already wrote into the browser.
+        // The Google Sheet is the system of record, so after a successful fetch
+        // the app mirrors it exactly. Local-only rows are NOT carried over: they
+        // are responses whose write to the sheet failed, and keeping them was
+        // what made the dashboard totals disagree with the sheet.
         const seen = new Set<string>();
-        const merged = [...fetchedCsi, ...localReal].filter(r => {
+        const merged = fetchedCsi.filter(r => {
           const k = keyOf(r);
           if (seen.has(k)) return false;
           seen.add(k);
@@ -1365,6 +1395,25 @@ export class StorageService {
     }
   }
 
+  // Reads how many data rows currently exist in a sheet tab. Used to verify that
+  // a write actually landed, instead of trusting an unverifiable response.
+  static async countSheetRows(sheetName: string): Promise<number | null> {
+    try {
+      const sheetId = this.getGoogleSheetId();
+      if (!sheetId) return null;
+      const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}&_=${Date.now()}`;
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) return null;
+      const text = await res.text();
+      if (!text) return null;
+      // Count non-empty lines, minus the header row.
+      const lines = text.split('\n').filter(l => l.trim().length > 0);
+      return Math.max(0, lines.length - 1);
+    } catch {
+      return null;
+    }
+  }
+
   static async syncDataToGoogleSheet(action: string, payload: any): Promise<{ success: boolean; message: string }> {
     try {
       const storedUrl = localStorage.getItem('csi_google_sheets_url');
@@ -1426,15 +1475,48 @@ export class StorageService {
         console.warn('Direct fetch failed, falling back to no-cors mode...');
       }
 
-      // 3. Fallback no-cors direct submission
+      // 3. Fallback no-cors direct submission.
+      //
+      // A no-cors request returns an OPAQUE response: the browser refuses to
+      // expose the status or body, so `await fetch(...)` resolves even when the
+      // request 404s, is rejected, or never reaches Google at all. The previous
+      // code returned success unconditionally here, which is why the app kept
+      // reporting "ส่งข้อมูลลง Google Sheet เรียบร้อยแล้ว" while nothing was
+      // actually written — the record only ever existed in the browser, and the
+      // dashboard totals drifted further from the sheet with every submission.
+      //
+      // Since the response can't be read, verify the write instead: count the
+      // sheet's rows before and after, and only report success if a row really
+      // appeared.
       try {
+        const sheetTab = SHEET_TAB_FOR_ACTION[action];
+        const before = sheetTab ? await this.countSheetRows(sheetTab) : null;
+
         await fetch(gasUrl, {
           method: 'POST',
           mode: 'no-cors',
           headers: { 'Content-Type': 'text/plain;charset=utf-8' },
           body: JSON.stringify(fullPayload)
         });
-        return { success: true, message: 'ส่งข้อมูลลง Google Sheet เรียบร้อยแล้ว (Direct Sync)' };
+
+        if (sheetTab && before !== null) {
+          // Give Apps Script a moment to append the row, then confirm.
+          for (let attempt = 0; attempt < 3; attempt++) {
+            await new Promise(r => setTimeout(r, 1200));
+            const after = await this.countSheetRows(sheetTab);
+            if (after !== null && after > before) {
+              return { success: true, message: 'บันทึกลง Google Sheet เรียบร้อยแล้ว' };
+            }
+          }
+          return {
+            success: false,
+            message:
+              'บันทึกลงเครื่องแล้ว แต่ยังไม่ขึ้น Google Sheet — ตรวจสอบว่าได้ตั้งค่า URL ของ Google Apps Script (Web App) ไว้ถูกต้อง และเผยแพร่แบบ "ทุกคนที่มีลิงก์" แล้วหรือยัง'
+          };
+        }
+
+        // No way to verify this action — say so rather than claiming success.
+        return { success: false, message: 'ส่งคำขอแล้ว แต่ไม่สามารถยืนยันได้ว่าข้อมูลขึ้น Google Sheet จริง' };
       } catch (err: any) {
         return { success: false, message: `ไม่สามารถส่งข้อมูลไปยัง Google Apps Script ได้: ${err.message}` };
       }

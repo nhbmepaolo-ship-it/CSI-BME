@@ -655,7 +655,7 @@ app.post('/api/sync-sheets', async (req, res) => {
     try {
       const { gasUrl, payload } = req.body;
 
-      const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbxjfDYcdMmOEdryWMUvb3zpbOYT5-VA1FEtDTC8jGkE8m4eh2qy0BmejNKkNYXB4AXb/exec';
+      const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbxYN-S1ejO-6-IWM11q84UjCcV4X6xiSPy9YgkSKichlnoyQ7RSC6xW_SW_DN1UUmoXMA/exec';
 
       const normalizeUrl = (rawUrl?: string): string => {
         if (!rawUrl || typeof rawUrl !== 'string' || !rawUrl.includes('script.google.com')) {
