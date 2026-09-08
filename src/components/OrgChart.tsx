@@ -611,9 +611,18 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
       return false;
     });
 
+    // Prefer the employee's real, current photo from the employee record (the
+    // exact same field the Staff Management page reads directly) over the
+    // hardcoded "verified" guess table below. The hardcoded table was built by
+    // hand and has gone stale for some people (e.g. it still points at an old
+    // "img1.pic.in.th" copy of a photo that was since re-uploaded to
+    // "img2.pic.in.th" — a URL that no longer exists), which is exactly why
+    // Staff Management (reads employee.img directly) could show a photo that
+    // the org chart couldn't. The hardcoded table is now only a last-resort
+    // fallback for chart nodes that aren't linked to any real employee record.
     const nodePhoto = getVerifiedBmePhoto(node.fullName, node.nickname, node.photoUrl);
-    const rawPhoto = (matchedEmp?.img && matchedEmp.img.trim().length > 5 && !matchedEmp.img.includes('images.unsplash')) 
-      ? getVerifiedBmePhoto(matchedEmp.fullName, matchedEmp.nickname, matchedEmp.img)
+    const rawPhoto = (matchedEmp?.img && matchedEmp.img.trim().length > 5 && !matchedEmp.img.includes('images.unsplash'))
+      ? matchedEmp.img
       : nodePhoto;
 
     const displayPhoto = getProxiedImageUrl(rawPhoto);

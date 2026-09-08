@@ -67,7 +67,26 @@ export function CoachingDashboard({ currentUser, showToast }: CoachingDashboardP
     const n = clean(rec.nickname);
     const id = clean(rec.empId);
 
-    // 1. Direct verified match for BME PTP staff
+    // 1. Prefer the employee's real, current photo from the live employee record
+    // (the exact same field Staff Management reads directly) over the hardcoded
+    // guess table below. The hardcoded table is hand-maintained and can go stale
+    // (e.g. it can still point at an old "img1.pic.in.th" copy of a photo that
+    // was since re-uploaded to "img2.pic.in.th" and no longer exists at the old
+    // URL) — checking the live employee record first avoids exactly that class
+    // of bug, where Staff Management shows the correct photo but this page doesn't.
+    const matched = employees.find(e => {
+      const eu = clean(e.username);
+      const ef = clean(e.fullName);
+      const en = clean(e.nickname);
+      return (id && eu === id) || (f && ef === f) || (n && en === n);
+    });
+
+    if (matched?.img && matched.img.trim().length > 5) {
+      return matched.img;
+    }
+
+    // 2. Fall back to a hand-verified photo for known BME PTP staff, for cases
+    // where there's no matching live employee record at all.
     if (f.includes('chalee') || f.includes('ชาลี') || n === 'ปิ้ง' || id === '761080') {
       return 'https://img2.pic.in.th/S__6471704_0-removebg-preview.png';
     }
@@ -93,7 +112,7 @@ export function CoachingDashboard({ currentUser, showToast }: CoachingDashboardP
       return 'https://img2.pic.in.th/4447b7344aeba4742.png';
     }
     if (f.includes('jatasig') || f.includes('จตสิกข์') || n.includes('เอิ๊ก')) {
-      return 'https://img1.pic.in.th/images/625192.png';
+      return 'https://img2.pic.in.th/images/625192.png';
     }
     if (f.includes('nattaporn') || f.includes('ณัฐพร') || f.includes('ณฐพร') || n.includes('นท') || n === 'ณฐ' || id === '563779') {
       return 'https://img1.pic.in.th/images/BME_563779..045629.png';
@@ -109,18 +128,6 @@ export function CoachingDashboard({ currentUser, showToast }: CoachingDashboardP
     }
     if (f.includes('salisa') || f.includes('ศลิษา') || n.includes('ษา') || id === '620331') {
       return 'https://img1.pic.in.th/images/6596ac2053383a160.png';
-    }
-
-    // 2. Lookup in loaded employees from storage
-    const matched = employees.find(e => {
-      const eu = clean(e.username);
-      const ef = clean(e.fullName);
-      const en = clean(e.nickname);
-      return (id && eu === id) || (f && ef === f) || (n && en === n);
-    });
-
-    if (matched?.img && matched.img.trim().length > 5) {
-      return matched.img;
     }
 
     return `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(rec.nickname || rec.fullName || rec.empId)}&skinColor=f8d25c`;
