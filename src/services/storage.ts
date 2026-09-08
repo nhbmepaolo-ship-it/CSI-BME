@@ -866,20 +866,35 @@ export class StorageService {
       const fetchedEmp: Employee[] = data.employees || [];
 
       if (fetchedCsi.length > 0) {
-        // Merge with existing CSI records avoid complete duplication by matching timestamp + dept + staffName
         const existing = this.getCSIRecords();
-        const existingKeys = new Set(existing.map(r => `${r.timestamp}_${r.dept}_${r.staffName}`));
 
-        const newRecordsToAdd = fetchedCsi.filter(
-          r => !existingKeys.has(`${r.timestamp}_${r.dept}_${r.staffName}`)
-        );
+        // Identify a response by its actual content, not by when it was synced.
+        const keyOf = (r: CSIRecord) =>
+          `${r.timestamp}_${r.dept}_${r.staffName}_${r.goodStaff || ''}_${r.extraNote || ''}`;
 
-        if (newRecordsToAdd.length > 0) {
-          const merged = [...newRecordsToAdd, ...existing];
-          this.saveCSIRecords(merged);
-        } else if (existing.length === 0 || existing === INITIAL_CSI_RECORDS) {
-          this.saveCSIRecords(fetchedCsi);
-        }
+        // Keep only local records that are NOT present in the sheet, so rows
+        // edited or removed in the sheet stop lingering in the app, and the
+        // sheet stays the source of truth. Records the user added offline (not
+        // yet in the sheet) are still preserved.
+        const fetchedKeys = new Set(fetchedCsi.map(keyOf));
+        const localOnly = existing.filter(r => !fetchedKeys.has(keyOf(r)));
+
+        // Drop the built-in demo rows once real sheet data exists — otherwise
+        // they permanently inflate the totals and department list.
+        const initialKeys = new Set(INITIAL_CSI_RECORDS.map(keyOf));
+        const localReal = localOnly.filter(r => !initialKeys.has(keyOf(r)));
+
+        // Final safety net: collapse any duplicates that earlier versions of
+        // this sync already wrote into the browser.
+        const seen = new Set<string>();
+        const merged = [...fetchedCsi, ...localReal].filter(r => {
+          const k = keyOf(r);
+          if (seen.has(k)) return false;
+          seen.add(k);
+          return true;
+        });
+
+        this.saveCSIRecords(merged);
       }
 
       if (fetchedEmp.length > 0) {
@@ -1069,22 +1084,44 @@ export class StorageService {
           const badReason = row[23] || '';
           const extraNote = row[24] || goodReason || '';
 
-          let formattedTime = new Date().toISOString();
+          // Parse the sheet timestamp by pulling out every number in the cell,
+          // rather than assuming an exact "DD/MM/YYYY HH:MM:SS" shape. Real rows
+          // in the sheet are not always clean — e.g. "08/09/26:15:54/27" has no
+          // space between date and time, so the old split(' ') + split('/')
+          // logic produced 4 parts instead of 3, silently failed, and fell back
+          // to `new Date().toISOString()`.
+          //
+          // That fallback is what broke syncing: it produced a DIFFERENT
+          // timestamp on every single sync, so the duplicate check below
+          // (timestamp + dept + staffName) never matched and the same sheet row
+          // was appended again on every refresh — which is why the totals kept
+          // climbing and drifted away from the real sheet.
+          //
+          // Now the value is always derived from the row itself, so re-syncing
+          // the same row always yields the same key and can never duplicate.
+          let formattedTime = '';
           if (timestampRaw) {
-            const parts = timestampRaw.split(' ');
-            if (parts[0] && parts[0].includes('/')) {
-              const dateParts = parts[0].split('/');
-              if (dateParts.length === 3) {
-                const day = dateParts[0].padStart(2, '0');
-                const month = dateParts[1].padStart(2, '0');
-                let year = parseInt(dateParts[2], 10);
-                if (year > 2500) year -= 543;
-                const timeStr = parts[1] || '00:00:00';
-                formattedTime = `${year}-${month}-${day}T${timeStr}`;
+            const nums = (timestampRaw.match(/\d+/g) || []).map(n => parseInt(n, 10));
+            if (nums.length >= 3 && !nums.some(isNaN)) {
+              const day = nums[0];
+              const month = nums[1];
+              let year = nums[2];
+              if (year > 2500) year -= 543;      // Buddhist calendar year
+              else if (year < 100) year += 2000; // 2-digit year, e.g. "26"
+              const hh = nums[3] ?? 0;
+              const mm = nums[4] ?? 0;
+              const ss = nums[5] ?? 0;
+              const p2 = (v: number) => String(v).padStart(2, '0');
+              if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+                formattedTime = `${year}-${p2(month)}-${p2(day)}T${p2(hh)}:${p2(mm)}:${p2(ss)}`;
               }
-            } else {
-              formattedTime = timestampRaw;
             }
+            // Still unparsable: keep the raw cell text. It stays constant across
+            // syncs, so the row is stored exactly once instead of duplicating.
+            if (!formattedTime) formattedTime = timestampRaw;
+          } else {
+            // Blank timestamp: derive a stable key from the row's own content.
+            formattedTime = `row-${i}-${dept}-${staffName}`;
           }
 
           csiRecords.push({
