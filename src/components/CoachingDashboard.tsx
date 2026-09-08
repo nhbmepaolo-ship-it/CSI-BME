@@ -550,9 +550,8 @@ export function CoachingDashboard({ currentUser, showToast }: CoachingDashboardP
                           : 'bg-slate-800 border-white/20'
                       }`}>
                         <img
-                          src={getProxiedImageUrl(getEmployeePhoto(rec))}
+                          src={getEmployeePhoto(rec)}
                           alt={rec.nickname || rec.fullName}
-                          crossOrigin="anonymous"
                           className="w-full h-full object-cover"
                           onError={e => handleAvatarError(e, rec.nickname, rec.fullName, getEmployeePhoto(rec))}
                         />
@@ -743,10 +742,9 @@ export function CoachingDashboard({ currentUser, showToast }: CoachingDashboardP
                       <td className={`py-3 px-3 font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>
                         <div className="flex items-center gap-2.5">
                           <img
-                            src={getProxiedImageUrl(getEmployeePhoto(rec))}
+                            src={getEmployeePhoto(rec)}
                             alt={rec.nickname || rec.fullName}
-                            crossOrigin="anonymous"
-                            className="w-8 h-8 rounded-full object-cover border border-indigo-400/40 shadow-xs flex-shrink-0"
+                              className="w-8 h-8 rounded-full object-cover border border-indigo-400/40 shadow-xs flex-shrink-0"
                             onError={e => handleAvatarError(e, rec.nickname, rec.fullName, getEmployeePhoto(rec))}
                           />
                           <div>
@@ -941,9 +939,8 @@ export function CoachingDashboard({ currentUser, showToast }: CoachingDashboardP
               <div className="flex items-center gap-3">
                 <div className="w-12 h-12 rounded-2xl overflow-hidden border border-indigo-400/40 shadow-md flex-shrink-0 relative">
                   <img
-                    src={getProxiedImageUrl(editForm.photoUrl || getEmployeePhoto(editingRecord))}
+                    src={editForm.photoUrl || getEmployeePhoto(editingRecord)}
                     alt={editingRecord.nickname || editingRecord.fullName}
-                    crossOrigin="anonymous"
                     className="w-full h-full object-cover"
                     onError={e => handleAvatarError(e, editingRecord.nickname, editingRecord.fullName, editForm.photoUrl || getEmployeePhoto(editingRecord))}
                   />

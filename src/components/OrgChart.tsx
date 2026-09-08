@@ -680,16 +680,24 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
               borderStyle: 'solid'
             }}
           >
+            {/* Load the real photo URL directly — exactly the way the Staff
+                Management page does it, which is why photos have always worked
+                there. Routing through /api/image-proxy (which 404s whenever the
+                Express backend isn't running) combined with crossOrigin="anonymous"
+                (which requires CORS headers the image host does not send) made
+                BOTH the proxy attempt and the direct retry fail, silently
+                dropping every real photo down to the generic cartoon avatar.
+                Export still works: prepareChartImagesForExport() converts these
+                images to data URLs before html2canvas runs. */}
             <img
-              src={displayPhoto}
+              src={rawPhoto}
               alt={node.fullName}
-              crossOrigin="anonymous"
               className="w-full h-full object-cover object-center"
               onError={e => {
                 const img = e.currentTarget;
-                if (rawPhoto && !img.dataset.retried) {
+                if (displayPhoto && displayPhoto !== rawPhoto && !img.dataset.retried) {
                   img.dataset.retried = 'true';
-                  img.src = rawPhoto;
+                  img.src = displayPhoto;
                 } else {
                   img.src = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(node.fullName)}`;
                 }
@@ -968,14 +976,14 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
               {/* Official BME Logo Container */}
               <div className="w-16 h-16 md:w-20 md:h-20 rounded-2xl bg-white border-2 border-sky-300 shadow-md p-1.5 flex items-center justify-center overflow-hidden">
                 <img
-                  src={getProxiedImageUrl('https://img2.pic.in.th/logo-BME.png')}
+                  src="https://img2.pic.in.th/logo-BME.png"
                   alt="BME Logo"
                   className="w-full h-full object-contain"
                   onError={e => {
                     const img = e.currentTarget;
                     if (!img.dataset.retried) {
                       img.dataset.retried = 'true';
-                      img.src = 'https://img2.pic.in.th/logo-BME.png';
+                      img.src = getProxiedImageUrl('https://img2.pic.in.th/logo-BME.png');
                     } else if (img.parentElement) {
                       img.parentElement.innerHTML = '<div className="flex flex-col items-center justify-center text-[#0288d1] font-black text-xs leading-none"><span>BME</span><span className="text-[9px] text-slate-500 font-bold">PTP</span></div>';
                     }
