@@ -370,10 +370,21 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
       const cvs = document.createElement('canvas');
       const ctx = cvs.getContext('2d');
       if (ctx) {
-        ctx.fillStyle = '#000';
+        // Use an very-unlikely-to-occur sentinel color as the baseline, then read
+        // back how the browser itself normalizes that exact string. If assigning
+        // `token` afterwards leaves fillStyle unchanged (identical to that
+        // baseline), the browser silently REJECTED `token` as unparsable (e.g. a
+        // color-mix() referencing a CSS custom property that has no meaning in an
+        // isolated canvas context) — not resolved it to black. Treating that
+        // silent rejection as "resolved to black" was the bug that made every
+        // failed-to-parse gradient/blob render as a solid opaque black shape in
+        // the exported PNG instead of just fading out.
+        const SENTINEL = 'rgba(1, 2, 3, 0.012)';
+        ctx.fillStyle = SENTINEL;
+        const baseline = ctx.fillStyle;
         ctx.fillStyle = token;
         const resolved = ctx.fillStyle;
-        if (resolved && !resolved.includes('oklab') && !resolved.includes('oklch') && !resolved.includes('color-mix')) {
+        if (resolved && resolved !== baseline && !resolved.includes('oklab') && !resolved.includes('oklch') && !resolved.includes('color-mix')) {
           return resolved;
         }
       }

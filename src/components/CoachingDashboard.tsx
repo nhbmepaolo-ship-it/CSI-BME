@@ -126,6 +126,22 @@ export function CoachingDashboard({ currentUser, showToast }: CoachingDashboardP
     return `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(rec.nickname || rec.fullName || rec.empId)}&skinColor=f8d25c`;
   };
 
+  // The employee photo data is already there (from getEmployeePhoto above) — the
+  // problem was that a single failed image-proxy request (e.g. when the backend
+  // proxy isn't running, like in a static preview) immediately gave up and
+  // dropped straight to a generic cartoon avatar, without ever trying the real
+  // photo's direct URL. This retries the direct/un-proxied URL once before
+  // falling back, so the real photo actually gets used whenever it's reachable.
+  const handleAvatarError = (e: React.SyntheticEvent<HTMLImageElement>, nickname: string, fullName: string, rawPhoto: string) => {
+    const img = e.currentTarget;
+    if (rawPhoto && !img.dataset.retried) {
+      img.dataset.retried = 'true';
+      img.src = rawPhoto;
+    } else {
+      img.src = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(nickname || fullName)}&skinColor=f8d25c`;
+    }
+  };
+
   const handleReset = () => {
     if (window.confirm('คุณต้องการรีเซ็ตข้อมูล Coaching เป็นค่าเริ่มต้นของ BME PTP ใช่หรือไม่?')) {
       const resetList = StorageService.resetCoachingRecords();
@@ -531,9 +547,7 @@ export function CoachingDashboard({ currentUser, showToast }: CoachingDashboardP
                           alt={rec.nickname || rec.fullName}
                           crossOrigin="anonymous"
                           className="w-full h-full object-cover"
-                          onError={(e) => {
-                            (e.target as HTMLImageElement).src = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(rec.nickname || rec.fullName)}&skinColor=f8d25c`;
-                          }}
+                          onError={e => handleAvatarError(e, rec.nickname, rec.fullName, getEmployeePhoto(rec))}
                         />
                       </div>
                       <div className="min-w-0 flex-1">
@@ -726,9 +740,7 @@ export function CoachingDashboard({ currentUser, showToast }: CoachingDashboardP
                             alt={rec.nickname || rec.fullName}
                             crossOrigin="anonymous"
                             className="w-8 h-8 rounded-full object-cover border border-indigo-400/40 shadow-xs flex-shrink-0"
-                            onError={(e) => {
-                              (e.target as HTMLImageElement).src = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(rec.nickname || rec.fullName)}&skinColor=f8d25c`;
-                            }}
+                            onError={e => handleAvatarError(e, rec.nickname, rec.fullName, getEmployeePhoto(rec))}
                           />
                           <div>
                             <div className="truncate max-w-[140px] sm:max-w-none">{rec.fullName}</div>
@@ -926,9 +938,7 @@ export function CoachingDashboard({ currentUser, showToast }: CoachingDashboardP
                     alt={editingRecord.nickname || editingRecord.fullName}
                     crossOrigin="anonymous"
                     className="w-full h-full object-cover"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).src = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(editingRecord.nickname || editingRecord.fullName)}&skinColor=f8d25c`;
-                    }}
+                    onError={e => handleAvatarError(e, editingRecord.nickname, editingRecord.fullName, editForm.photoUrl || getEmployeePhoto(editingRecord))}
                   />
                 </div>
                 <div>
