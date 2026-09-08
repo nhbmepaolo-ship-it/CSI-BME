@@ -25,13 +25,20 @@ async function startServer() {
         }
       }
 
-      const response = await fetch(imageUrl, {
-        redirect: 'follow',
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8'
-        }
-      });
+      const headers: Record<string, string> = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8'
+      };
+
+      if (imageUrl.includes('pic.in.th')) {
+        headers['Referer'] = 'https://pic.in.th/';
+      }
+
+      let response = await fetch(imageUrl, { redirect: 'follow', headers });
+
+      if (!response.ok) {
+        response = await fetch(imageUrl, { redirect: 'follow' });
+      }
 
       if (!response.ok) {
         return res.status(400).send(`Failed to fetch image (HTTP ${response.status})`);

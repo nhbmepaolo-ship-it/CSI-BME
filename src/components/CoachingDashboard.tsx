@@ -12,6 +12,7 @@ interface CoachingDashboardProps {
 
 export function CoachingDashboard({ currentUser, showToast }: CoachingDashboardProps) {
   const [records, setRecords] = useState<CoachingRecord[]>([]);
+  const [employees, setEmployees] = useState<Employee[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedAnimal, setSelectedAnimal] = useState<string>('all');
   const [selectedType, setSelectedType] = useState<string>('all');
@@ -37,11 +38,40 @@ export function CoachingDashboard({ currentUser, showToast }: CoachingDashboardP
 
   useEffect(() => {
     loadRecords();
+    setEmployees(StorageService.getEmployees());
   }, []);
 
   const loadRecords = () => {
     const list = StorageService.getCoachingRecords();
     setRecords(list);
+  };
+
+  // Match each coaching record to its employee photo. Primary key is the employee
+  // code (empId === username), which covers almost everyone. A couple of
+  // leadership rows use an internal HR code that differs from their login
+  // username, so we fall back to matching on the Thai nickname in that case.
+  const employeesByUsername = useMemo(() => {
+    const map: Record<string, Employee> = {};
+    employees.forEach(e => {
+      if (e.username) map[e.username.trim().toLowerCase()] = e;
+    });
+    return map;
+  }, [employees]);
+
+  const employeesByNickname = useMemo(() => {
+    const map: Record<string, Employee> = {};
+    employees.forEach(e => {
+      if (e.nickname) map[e.nickname.trim()] = e;
+    });
+    return map;
+  }, [employees]);
+
+  const getEmployeePhoto = (rec: CoachingRecord): string | null => {
+    const byId = employeesByUsername[(rec.empId || '').trim().toLowerCase()];
+    if (byId && byId.img) return byId.img;
+    const byNick = employeesByNickname[(rec.nickname || '').trim()];
+    if (byNick && byNick.img) return byNick.img;
+    return null;
   };
 
   const handleReset = () => {
@@ -425,6 +455,7 @@ export function CoachingDashboard({ currentUser, showToast }: CoachingDashboardP
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredRecords.map(rec => {
             const badge = getAnimalBadge(rec.animalType);
+            const photoUrl = getEmployeePhoto(rec);
 
             return (
               <div
@@ -439,11 +470,27 @@ export function CoachingDashboard({ currentUser, showToast }: CoachingDashboardP
                 <div>
                   <div className="flex items-start justify-between gap-2.5 mb-3">
                     <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-semibold text-xs shadow-2xs flex-shrink-0 border ${
+                      {photoUrl ? (
+                        <img
+                          src={photoUrl}
+                          alt={rec.nickname || rec.fullName}
+                          className={`w-10 h-10 rounded-xl object-cover flex-shrink-0 border ${
+                            isLight ? 'border-indigo-200' : 'border-white/20'
+                          }`}
+                          onError={e => {
+                            // If the photo fails to load, fall back to the nickname badge
+                            const img = e.currentTarget;
+                            img.style.display = 'none';
+                            const fallback = img.nextElementSibling as HTMLElement | null;
+                            if (fallback) fallback.style.display = 'flex';
+                          }}
+                        />
+                      ) : null}
+                      <div className={`w-10 h-10 rounded-xl items-center justify-center font-semibold text-xs shadow-2xs flex-shrink-0 border ${
                         isLight
                           ? 'bg-gradient-to-br from-indigo-500 to-purple-600 text-white border-indigo-200'
                           : 'bg-gradient-to-br from-indigo-500/20 to-purple-600/20 text-white border-white/20'
-                      }`}>
+                      }`} style={{ display: photoUrl ? 'none' : 'flex' }}>
                         <span className="px-1 text-center truncate">{rec.nickname}</span>
                       </div>
                       <div className="min-w-0 flex-1">
@@ -625,12 +672,23 @@ export function CoachingDashboard({ currentUser, showToast }: CoachingDashboardP
               <tbody className={`divide-y ${isLight ? 'divide-slate-200 text-slate-800' : 'divide-white/5 text-slate-200'}`}>
                 {filteredRecords.map((rec, idx) => {
                   const badge = getAnimalBadge(rec.animalType);
+                  const photoUrl = getEmployeePhoto(rec);
                   return (
                     <tr key={rec.id} className={`transition-colors ${isLight ? 'hover:bg-slate-50' : 'hover:bg-white/5'}`}>
                       <td className="py-3 px-3 text-center font-mono font-bold text-slate-400">{idx + 1}</td>
                       <td className="py-3 px-3 font-mono text-slate-500">{rec.empId}</td>
                       <td className={`py-3 px-3 font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>
-                        {rec.fullName} <span className="text-indigo-600 font-normal">({rec.nickname})</span>
+                        <div className="flex items-center gap-2">
+                          {photoUrl ? (
+                            <img
+                              src={photoUrl}
+                              alt={rec.nickname || rec.fullName}
+                              className={`w-7 h-7 rounded-lg object-cover flex-shrink-0 border ${isLight ? 'border-slate-200' : 'border-white/10'}`}
+                              onError={e => { e.currentTarget.style.display = 'none'; }}
+                            />
+                          ) : null}
+                          <span>{rec.fullName} <span className="text-indigo-600 font-normal">({rec.nickname})</span></span>
+                        </div>
                       </td>
                       <td className="py-3 px-3">
                         {rec.position} <span className="text-[10px] text-slate-400 block">{rec.contractType}</span>

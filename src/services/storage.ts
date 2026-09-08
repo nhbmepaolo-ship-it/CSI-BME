@@ -228,6 +228,14 @@ export class StorageService {
         continue;
       }
 
+      // Filter out phantom placeholder employees created from blank Google Sheet
+      // rows (auto-generated username like "emp_16", "emp_17" with no real name).
+      // These show up as duplicate-looking "0 points" cards with a generic avatar.
+      if (emp.username && /^emp_\d+$/.test(emp.username.trim()) && !cleanNick && !cleanFull) {
+        hasChanges = true;
+        continue;
+      }
+
       if (!cleanNick && !cleanFull && !emp.username) {
         hasChanges = true;
         continue;
@@ -1102,7 +1110,11 @@ export class StorageService {
                     const uUpper = username.toUpperCase();
                     const isAdmin = uUpper.includes('ADMIN') || uUpper.includes('SPV') || uUpper.includes('MGR') || uUpper === '563770';
 
-                    if (fullName || nickname || username) {
+                    // Only create an employee record when the row actually has a
+                    // real name — an empty sheet row must NOT turn into a phantom
+                    // "emp_16" / "emp_17" style duplicate placeholder employee,
+                    // since `username` always has a fallback value (`emp_${j}`).
+                    if (fullName || nickname) {
                       employees.push({
                         id: `sheet-emp-${username}`,
                         username,
