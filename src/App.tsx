@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Employee } from './types';
 import { StorageService } from './services/storage';
 import { isAuthorizedAdminUser } from './data/initialData';
@@ -55,30 +55,62 @@ export default function App() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncVersion, setSyncVersion] = useState(0);
 
+  // Always-current copy of activePage for the setInterval closure below (the interval is
+  // created once on mount, so without this ref it would forever see whatever page was
+  // active at that first render — a stale-closure bug).
+  const activePageRef = useRef(activePage);
+  useEffect(() => {
+    activePageRef.current = activePage;
+  }, [activePage]);
+
+  // Bumping syncVersion remounts the whole active page (it's used as that page's `key`),
+  // which is how a page picks up freshly-synced data — but it also resets any unsaved
+  // input, open dropdowns, and scroll position on that page. Earlier this fired on every
+  // single background poll regardless of whether anything new had actually arrived, which
+  // felt like the app was "updating/reloading itself" constantly even when nothing changed.
+  // Fix: StorageService now reports whether a pull actually changed anything, and the view
+  // only refreshes when it did — AND only for read-only dashboard pages, never pages where
+  // the person is actively entering or editing something.
+  const PASSIVE_DASHBOARD_PAGES: PageView[] = ['csi-dash', 'act-dash'];
+  const refreshViewIfChanged = (hasChanges: boolean) => {
+    if (hasChanges && PASSIVE_DASHBOARD_PAGES.includes(activePageRef.current)) {
+      setSyncVersion(prev => prev + 1);
+    }
+  };
+
   const triggerGlobalSync = async (silent = true) => {
     setIsSyncing(true);
     try {
       const res = await StorageService.fetchAndSyncFromGoogleSheet();
+      let anyChange = res.success && res.changed;
       if (res.success) {
-        setSyncVersion(prev => prev + 1);
-
-        // Refresh current user if data changed in Google Sheet (avoid unnecessary re-renders)
+        // Refresh current user's data (photo, name, etc.) if it changed in the Google Sheet,
+        // without relying on any persisted/stored login session
         const freshEmps = StorageService.getEmployees();
-        const currentStored = StorageService.getCurrentUser();
-        if (currentStored) {
+        setCurrentUser(prevUser => {
+          if (!prevUser) return prevUser;
           const matched = freshEmps.find(
-            e => e.id === currentStored.id || (e.username && currentStored.username && e.username.toLowerCase() === currentStored.username.toLowerCase())
+            e => e.id === prevUser.id || (e.username && prevUser.username && e.username.toLowerCase() === prevUser.username.toLowerCase())
           );
-          if (matched && (matched.fullName !== currentStored.fullName || matched.img !== currentStored.img || matched.club !== currentStored.club)) {
-            setCurrentUser(matched);
-            StorageService.setCurrentUser(matched);
-          }
-        }
+          return matched || prevUser;
+        });
 
         if (!silent) showToast('success', 'ซิงค์ข้อมูลล่าสุดจาก Google Sheet เรียบร้อยแล้ว');
       } else if (!silent) {
         showToast('error', res.message || 'ซิงค์ข้อมูลไม่สำเร็จ');
       }
+
+      // Pull shared activities/votes/org chart/coaching from Google Sheets too, if a GAS
+      // Web App URL has been configured (silently skipped otherwise) — via ONE combined
+      // request instead of four, to go easy on Google's free quota (see pullAllSharedFromSheet).
+      try {
+        const sharedChanged = await StorageService.pullAllSharedFromSheet();
+        if (sharedChanged) anyChange = true;
+      } catch (e) {
+        console.warn('Shared-data pull (activities/votes/org chart/coaching) skipped:', e);
+      }
+
+      refreshViewIfChanged(anyChange);
     } catch {
       if (!silent) showToast('error', 'เกิดข้อผิดพลาดในการเชื่อมต่อ Google Sheet');
     } finally {
@@ -86,29 +118,39 @@ export default function App() {
     }
   };
 
-  const [showLoginModal, setShowLoginModal] = useState(false);
-  const [loginUsername, setLoginUsername] = useState('');
-  const [loginPassword, setLoginPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-
   useEffect(() => {
-    // Start at Default View (Guest Mode - Do not persist login session on reload)
+    // Intentionally do NOT auto-login with any user (default or previously stored).
+    // Every time the app is opened it starts with NO user selected — pure view-only mode.
+    // The person must explicitly log in (from the Vote or Activity Log page) each time
+    // they want to submit/edit anything.
+    StorageService.setCurrentUser(null); // clear any leftover session from earlier versions of the app
     setCurrentUser(null);
-    StorageService.setCurrentUser(null);
 
-    // Immediately trigger auto-sync from Google Sheet on initial app startup
+    // Immediately trigger auto-sync from Google Sheet on app startup
     triggerGlobalSync(true);
+
+    // Set up periodic background auto-sync every 3 minutes. This still means nobody ever
+    // has to click a button — but checking every 30 seconds like an earlier version did
+    // was needlessly hitting Google's Sheets/Apps-Script quota (each check made several
+    // requests) for no real benefit, since evaluations/activities/votes don't get submitted
+    // second-to-second. 3 minutes keeps it feeling automatic while being much lighter.
+    const syncInterval = setInterval(() => {
+      triggerGlobalSync(true);
+    }, 180000);
+
+    return () => clearInterval(syncInterval);
   }, []);
 
   const handleLogin = (user: Employee) => {
+    // Kept only in memory for this session — never written to localStorage,
+    // so a login never "ค้าง" (persists) into the next time the app is opened.
     setCurrentUser(user);
-    StorageService.setCurrentUser(user);
   };
 
   const handleLogout = () => {
+    // Always return to NO user (view-only) — never a default identity
     setCurrentUser(null);
-    StorageService.setCurrentUser(null);
-    showToast('success', 'ออกจากระบบเรียบร้อยแล้ว');
+    showToast('success', 'ออกจากระบบเรียบร้อยแล้ว (โหมดดูอย่างเดียว)');
   };
 
   const showModal = (type: 'success' | 'warning', title: string, body: string) => {
@@ -312,42 +354,40 @@ export default function App() {
           </button>
         </nav>
 
-        {/* Sidebar Footer User Info / Login Toggle */}
-        <div className="p-3.5 border-t border-white/10 bg-slate-950/40 backdrop-blur-md">
-          {currentUser ? (
-            <div className="flex items-center gap-2.5">
-              <img
-                src={currentUser.img || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(currentUser.nickname || 'user')}`}
-                alt={currentUser.nickname}
-                className="w-9 h-9 rounded-xl object-cover border border-white/20 bg-slate-800 flex-shrink-0 shadow-sm"
-                onError={e => {
-                  (e.target as HTMLImageElement).src = `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(currentUser.nickname || 'user')}`;
-                }}
-              />
-              <div className="flex-1 min-w-0">
-                <div className="text-xs font-bold text-slate-100 truncate">{currentUser.nickname || currentUser.fullName}</div>
-                <div className="text-[10px] text-emerald-400 font-bold truncate">
-                  {currentUser.isAdmin ? '👑 Admin' : '👤 Staff'} ({currentUser.username})
-                </div>
-              </div>
-              <button
-                onClick={handleLogout}
-                title="ออกจากระบบ"
-                className="p-1.5 text-xs text-rose-400 hover:text-rose-200 hover:bg-rose-500/20 rounded-lg transition-colors"
-              >
-                <i className="fa-solid fa-right-from-bracket"></i>
-              </button>
+        {/* Sidebar Footer User Info */}
+        {currentUser ? (
+          <div className="p-3.5 border-t border-white/10 bg-slate-950/40 backdrop-blur-md flex items-center gap-3">
+            <img
+              src={currentUser.img || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(currentUser.nickname || 'user')}`}
+              alt={currentUser.nickname}
+              className="w-9 h-9 rounded-xl object-cover border border-white/20 bg-slate-800 flex-shrink-0 shadow-sm"
+              onError={e => {
+                (e.target as HTMLImageElement).src = `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(currentUser.nickname || 'user')}`;
+              }}
+            />
+            <div className="flex-1 min-w-0">
+              <div className="text-xs font-bold text-slate-100 truncate">{currentUser.fullName}</div>
+              <div className="text-[10px] text-slate-400 font-mono">User: {currentUser.username}</div>
             </div>
-          ) : (
             <button
-              onClick={() => setShowLoginModal(true)}
-              className="w-full py-2.5 px-3 rounded-xl bg-indigo-600/30 hover:bg-indigo-600/50 border border-indigo-400/40 text-indigo-200 font-th font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-md"
+              onClick={handleLogout}
+              title="ออกจากระบบ"
+              className="w-8 h-8 rounded-lg bg-white/5 hover:bg-rose-500/20 border border-white/10 hover:border-rose-400/40 text-slate-400 hover:text-rose-300 flex items-center justify-center flex-shrink-0 transition-all"
             >
-              <i className="fa-solid fa-key text-indigo-300"></i>
-              <span>เข้าสู่ระบบ (Admin / Staff)</span>
+              <i className="fa-solid fa-right-from-bracket text-xs"></i>
             </button>
-          )}
-        </div>
+          </div>
+        ) : (
+          <div className="p-3.5 border-t border-white/10 bg-slate-950/40 backdrop-blur-md flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-slate-500 flex-shrink-0">
+              <i className="fa-solid fa-user-lock text-sm"></i>
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-xs font-bold text-slate-300 truncate">ยังไม่ได้เข้าสู่ระบบ</div>
+              <div className="text-[10px] text-slate-500">โหมดดูอย่างเดียว · เข้าสู่ระบบที่หน้าโหวต/บันทึกกิจกรรม</div>
+            </div>
+          </div>
+        )}
       </aside>
 
       {/* Main Content Area */}
@@ -370,21 +410,19 @@ export default function App() {
             </p>
           </div>
 
-          {/* Quick Page Nav & Sync Button */}
+          {/* Quick Page Nav & Live Sync Status (no manual button — syncs automatically every 30s) */}
           <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => triggerGlobalSync(false)}
-              disabled={isSyncing}
-              title="ซิงค์ข้อมูลจาก Google Sheet ทั้งหมด"
-              className={`px-2.5 py-1.5 rounded-xl text-xs font-bold border transition-all flex items-center gap-1.5 ${
+            <div
+              title="เชื่อมต่อ Google Sheet และอัปเดตข้อมูลอัตโนมัติทุก 30 วินาที ไม่ต้องกดเอง"
+              className={`px-2.5 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 select-none ${
                 isSyncing
-                  ? 'bg-amber-500/30 text-amber-200 border-amber-400/50 animate-pulse'
-                  : 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border-emerald-400/40'
+                  ? 'bg-amber-500/20 text-amber-200 border-amber-400/40'
+                  : 'bg-emerald-500/10 text-emerald-300 border-emerald-400/30'
               }`}
             >
-              <i className={`fa-solid fa-rotate ${isSyncing ? 'animate-spin text-amber-300' : 'text-emerald-400'}`}></i>
-              <span className="hidden sm:inline">{isSyncing ? 'กำลังซิงค์...' : 'ซิงค์ Sheet'}</span>
-            </button>
+              <span className={`w-2 h-2 rounded-full ${isSyncing ? 'bg-amber-400 animate-pulse' : 'bg-emerald-400 animate-pulse'}`}></span>
+              <span className="hidden sm:inline">{isSyncing ? 'กำลังอัปเดต...' : 'อัปเดตอัตโนมัติ'}</span>
+            </div>
 
             <button
               onClick={() => setActivePage('csi-form')}
@@ -448,8 +486,8 @@ export default function App() {
             <BMEStarVote
               key={syncVersion}
               currentUser={currentUser}
-              onLogin={user => setCurrentUser(user)}
-              onLogout={() => setCurrentUser(null)}
+              onLogin={handleLogin}
+              onLogout={handleLogout}
               showToast={showToast}
             />
           )}
@@ -520,108 +558,6 @@ export default function App() {
           }`}>
             <i className={`fa-solid ${toastState.type === 'success' ? 'fa-circle-check' : 'fa-circle-xmark'} text-base`}></i>
             <span>{toastState.msg}</span>
-          </div>
-        </div>
-      )}
-
-      {/* Login Modal */}
-      {showLoginModal && (
-        <div className="fixed inset-0 bg-black/75 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-fade-in">
-          <div className="bg-slate-900/90 backdrop-blur-2xl border border-white/20 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl space-y-5">
-            <div className="flex items-center justify-between border-b border-white/10 pb-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-indigo-500/20 border border-indigo-400/40 flex items-center justify-center text-indigo-300">
-                  <i className="fa-solid fa-user-lock text-lg"></i>
-                </div>
-                <div>
-                  <h3 className="font-th font-extrabold text-lg text-white">เข้าสู่ระบบ (Login)</h3>
-                  <p className="text-[11px] text-slate-400">กรอกรหัสพนักงาน/Username และรหัสผ่านเพื่อเข้าสู่ระบบ</p>
-                </div>
-              </div>
-              <button
-                onClick={() => setShowLoginModal(false)}
-                className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/15 text-slate-400 hover:text-white flex items-center justify-center transition-colors"
-              >
-                <i className="fa-solid fa-xmark"></i>
-              </button>
-            </div>
-
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (!loginUsername.trim()) {
-                  showToast('error', 'กรุณากรอกรหัสพนักงาน / Username');
-                  return;
-                }
-                const authRes = StorageService.authenticateUser(loginUsername, loginPassword);
-                if (authRes.success && authRes.user) {
-                  handleLogin(authRes.user);
-                  setShowLoginModal(false);
-                  setLoginUsername('');
-                  setLoginPassword('');
-                  showToast('success', `ยินดีต้อนรับคุณ ${authRes.user.nickname || authRes.user.fullName}`);
-                } else {
-                  showToast('error', authRes.message || 'รหัสพนักงานหรือรหัสผ่านไม่ถูกต้อง');
-                }
-              }}
-              className="space-y-4 font-th"
-            >
-              <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1.5 flex items-center gap-1.5">
-                  <i className="fa-solid fa-id-card text-indigo-400"></i>
-                  รหัสพนักงาน / Username
-                </label>
-                <input
-                  type="text"
-                  value={loginUsername}
-                  onChange={e => setLoginUsername(e.target.value)}
-                  placeholder="เช่น 563770 หรือ MGR_BME"
-                  className="w-full px-4 py-3 rounded-2xl bg-slate-950/80 border border-white/15 text-white text-xs font-bold focus:outline-none focus:border-indigo-400 placeholder:text-slate-500 transition-colors"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1.5 flex items-center gap-1.5">
-                  <i className="fa-solid fa-key text-indigo-400"></i>
-                  รหัสผ่าน (Password)
-                </label>
-                <div className="relative">
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    value={loginPassword}
-                    onChange={e => setLoginPassword(e.target.value)}
-                    placeholder="กรอกรหัสผ่าน..."
-                    className="w-full px-4 py-3 pr-10 rounded-2xl bg-slate-950/80 border border-white/15 text-white text-xs font-bold focus:outline-none focus:border-indigo-400 placeholder:text-slate-500 transition-colors"
-                    required
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white p-1 text-xs"
-                  >
-                    <i className={`fa-solid ${showPassword ? 'fa-eye-slash' : 'fa-eye'}`}></i>
-                  </button>
-                </div>
-              </div>
-
-              <div className="pt-2 flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => setShowLoginModal(false)}
-                  className="flex-1 py-3 rounded-2xl bg-white/5 hover:bg-white/10 text-slate-300 font-bold text-xs border border-white/10 transition-colors"
-                >
-                  ยกเลิก
-                </button>
-                <button
-                  type="submit"
-                  className="flex-1 py-3 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs shadow-lg shadow-indigo-600/30 transition-colors flex items-center justify-center gap-2"
-                >
-                  <i className="fa-solid fa-right-to-bracket"></i>
-                  เข้าสู่ระบบ
-                </button>
-              </div>
-            </form>
           </div>
         </div>
       )}

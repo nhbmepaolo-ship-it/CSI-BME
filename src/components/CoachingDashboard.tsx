@@ -12,7 +12,6 @@ interface CoachingDashboardProps {
 
 export function CoachingDashboard({ currentUser, showToast }: CoachingDashboardProps) {
   const [records, setRecords] = useState<CoachingRecord[]>([]);
-  const [employees, setEmployees] = useState<Employee[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedAnimal, setSelectedAnimal] = useState<string>('all');
   const [selectedType, setSelectedType] = useState<string>('all');
@@ -43,110 +42,6 @@ export function CoachingDashboard({ currentUser, showToast }: CoachingDashboardP
   const loadRecords = () => {
     const list = StorageService.getCoachingRecords();
     setRecords(list);
-    const emps = StorageService.getEmployees();
-    setEmployees(emps);
-  };
-
-  const getProxiedImageUrl = (url?: string) => {
-    if (!url) return '';
-    if (url.startsWith('data:') || url.startsWith('blob:')) return url;
-    if (url.includes('/api/image-proxy')) return url;
-    if (url.startsWith('http://') || url.startsWith('https://')) {
-      return `/api/image-proxy?url=${encodeURIComponent(url)}`;
-    }
-    return url;
-  };
-
-  const getEmployeePhoto = (rec: CoachingRecord): string => {
-    if (rec.photoUrl && rec.photoUrl.trim().length > 5) {
-      return rec.photoUrl;
-    }
-
-    const clean = (s?: string) => (s || '').toLowerCase().replace(/\s+/g, ' ').trim();
-    const f = clean(rec.fullName);
-    const n = clean(rec.nickname);
-    const id = clean(rec.empId);
-
-    // 1. Prefer the employee's real, current photo from the live employee record
-    // (the exact same field Staff Management reads directly) over the hardcoded
-    // guess table below. The hardcoded table is hand-maintained and can go stale
-    // (e.g. it can still point at an old "img1.pic.in.th" copy of a photo that
-    // was since re-uploaded to "img2.pic.in.th" and no longer exists at the old
-    // URL) — checking the live employee record first avoids exactly that class
-    // of bug, where Staff Management shows the correct photo but this page doesn't.
-    const matched = employees.find(e => {
-      const eu = clean(e.username);
-      const ef = clean(e.fullName);
-      const en = clean(e.nickname);
-      return (id && eu === id) || (f && ef === f) || (n && en === n);
-    });
-
-    if (matched?.img && matched.img.trim().length > 5) {
-      return matched.img;
-    }
-
-    // 2. Fall back to a hand-verified photo for known BME PTP staff, for cases
-    // where there's no matching live employee record at all.
-    if (f.includes('chalee') || f.includes('ชาลี') || n === 'ปิ้ง' || id === '761080') {
-      return 'https://img2.pic.in.th/S__6471704_0-removebg-preview.png';
-    }
-    if (f.includes('raschanee') || f.includes('รัชณี') || n === 'มิน' || id === '569492') {
-      return 'https://img1.pic.in.th/images/970d1e089ad78d07db702e1eab5698c6.png';
-    }
-    if (f.includes('supattra') || f.includes('สุพัตรา') || n === 'เปี้ยว' || id === '563770') {
-      return 'https://img2.pic.in.th/BME_563770..045756.png';
-    }
-    if (f.includes('suwapa') || f.includes('สุวาภา') || n === 'อ้อ' || id === '612366') {
-      return 'https://img2.pic.in.th/BME_612366..045835.png';
-    }
-    if (f.includes('aiyaret') || f.includes('ไอยเรศ') || n.includes('เป๊ก') || id === '603892') {
-      return 'https://img2.pic.in.th/BME_603892..045611.png';
-    }
-    if (f.includes('suphawat') || f.includes('ศุภวัฒน์') || n.includes('ตาล') || id === '606675') {
-      return 'https://img2.pic.in.th/BME_606675..045820.png';
-    }
-    if (f.includes('kanthida') || f.includes('กานต์ธิดา') || n.includes('แฮม') || id === '563775') {
-      return 'https://img1.pic.in.th/images/5fb2f77d94121bd37.png';
-    }
-    if (f.includes('pannapat') || f.includes('พรรณพัชร') || n.includes('อ้น') || n.includes('อ้อน') || id === '622659') {
-      return 'https://img2.pic.in.th/4447b7344aeba4742.png';
-    }
-    if (f.includes('jatasig') || f.includes('จตสิกข์') || n.includes('เอิ๊ก')) {
-      return 'https://img1.pic.in.th/images/625192.png';
-    }
-    if (f.includes('nattaporn') || f.includes('ณัฐพร') || f.includes('ณฐพร') || n.includes('นท') || n === 'ณฐ' || id === '563779') {
-      return 'https://img1.pic.in.th/images/BME_563779..045629.png';
-    }
-    if (f.includes('thaweewat') || f.includes('ทวีวัฒน์') || n.includes('ซัน') || id === '614669') {
-      return 'https://img1.pic.in.th/images/BME_614669..045936.png';
-    }
-    if (f.includes('titima') || f.includes('ฐิติมา') || n.includes('จิ๊บ') || id === '616475') {
-      return 'https://img1.pic.in.th/images/BME_616475..050052.png';
-    }
-    if (f.includes('pinmanee') || f.includes('ปิ่นมณี') || n.includes('ปิ่น')) {
-      return 'https://img2.pic.in.th/3dd5cdfa08338f7c4.png';
-    }
-    if (f.includes('salisa') || f.includes('ศลิษา') || n.includes('ษา') || id === '620331') {
-      return 'https://img1.pic.in.th/images/6596ac2053383a160.png';
-    }
-
-    return `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(rec.nickname || rec.fullName || rec.empId)}&skinColor=f8d25c`;
-  };
-
-  // The employee photo data is already there (from getEmployeePhoto above) — the
-  // problem was that a single failed image-proxy request (e.g. when the backend
-  // proxy isn't running, like in a static preview) immediately gave up and
-  // dropped straight to a generic cartoon avatar, without ever trying the real
-  // photo's direct URL. This retries the direct/un-proxied URL once before
-  // falling back, so the real photo actually gets used whenever it's reachable.
-  const handleAvatarError = (e: React.SyntheticEvent<HTMLImageElement>, nickname: string, fullName: string, rawPhoto: string) => {
-    const img = e.currentTarget;
-    if (rawPhoto && !img.dataset.retried) {
-      img.dataset.retried = 'true';
-      img.src = rawPhoto;
-    } else {
-      img.src = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(nickname || fullName)}&skinColor=f8d25c`;
-    }
   };
 
   const handleReset = () => {
@@ -162,20 +57,14 @@ export function CoachingDashboard({ currentUser, showToast }: CoachingDashboardP
     setEditForm({ ...rec });
   };
 
-  const handleSaveEdit = async (e: React.FormEvent) => {
+  const handleSaveEdit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingRecord) return;
 
-    const { list, syncResult } = await StorageService.updateCoachingRecord(editingRecord.id, editForm);
-    setRecords(list);
+    const updatedList = StorageService.updateCoachingRecord(editingRecord.id, editForm);
+    setRecords(updatedList);
     setEditingRecord(null);
-    if (showToast) {
-      if (syncResult.success) {
-        showToast('success', `อัปเดตข้อมูล Coaching ของ ${editingRecord.fullName} และบันทึกลง Google Sheet เรียบร้อยแล้ว`);
-      } else {
-        showToast('error', `อัปเดตในแอปแล้ว แต่ Google Sheet แจ้งว่า: ${syncResult.message}`);
-      }
-    }
+    if (showToast) showToast('success', `อัปเดตข้อมูล Coaching ของ ${editingRecord.fullName} เรียบร้อยแล้ว`);
   };
 
   // Filtered records
@@ -544,17 +433,12 @@ export function CoachingDashboard({ currentUser, showToast }: CoachingDashboardP
                 <div>
                   <div className="flex items-start justify-between gap-2.5 mb-3">
                     <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                      <div className={`w-12 h-12 rounded-xl flex items-center justify-center font-semibold text-xs shadow-md flex-shrink-0 border overflow-hidden relative ${
+                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-semibold text-xs shadow-2xs flex-shrink-0 border ${
                         isLight
-                          ? 'bg-slate-100 border-indigo-200'
-                          : 'bg-slate-800 border-white/20'
+                          ? 'bg-gradient-to-br from-indigo-500 to-purple-600 text-white border-indigo-200'
+                          : 'bg-gradient-to-br from-indigo-500/20 to-purple-600/20 text-white border-white/20'
                       }`}>
-                        <img
-                          src={getEmployeePhoto(rec)}
-                          alt={rec.nickname || rec.fullName}
-                          className="w-full h-full object-cover"
-                          onError={e => handleAvatarError(e, rec.nickname, rec.fullName, getEmployeePhoto(rec))}
-                        />
+                        <span className="px-1 text-center truncate">{rec.nickname}</span>
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5 flex-wrap">
@@ -740,18 +624,7 @@ export function CoachingDashboard({ currentUser, showToast }: CoachingDashboardP
                       <td className="py-3 px-3 text-center font-mono font-bold text-slate-400">{idx + 1}</td>
                       <td className="py-3 px-3 font-mono text-slate-500">{rec.empId}</td>
                       <td className={`py-3 px-3 font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>
-                        <div className="flex items-center gap-2.5">
-                          <img
-                            src={getEmployeePhoto(rec)}
-                            alt={rec.nickname || rec.fullName}
-                              className="w-8 h-8 rounded-full object-cover border border-indigo-400/40 shadow-xs flex-shrink-0"
-                            onError={e => handleAvatarError(e, rec.nickname, rec.fullName, getEmployeePhoto(rec))}
-                          />
-                          <div>
-                            <div className="truncate max-w-[140px] sm:max-w-none">{rec.fullName}</div>
-                            <span className="text-indigo-600 font-normal text-xs">({rec.nickname})</span>
-                          </div>
-                        </div>
+                        {rec.fullName} <span className="text-indigo-600 font-normal">({rec.nickname})</span>
                       </td>
                       <td className="py-3 px-3">
                         {rec.position} <span className="text-[10px] text-slate-400 block">{rec.contractType}</span>
@@ -937,17 +810,12 @@ export function CoachingDashboard({ currentUser, showToast }: CoachingDashboardP
               isLight ? 'border-slate-200' : 'border-white/10'
             }`}>
               <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-2xl overflow-hidden border border-indigo-400/40 shadow-md flex-shrink-0 relative">
-                  <img
-                    src={editForm.photoUrl || getEmployeePhoto(editingRecord)}
-                    alt={editingRecord.nickname || editingRecord.fullName}
-                    className="w-full h-full object-cover"
-                    onError={e => handleAvatarError(e, editingRecord.nickname, editingRecord.fullName, editForm.photoUrl || getEmployeePhoto(editingRecord))}
-                  />
+                <div className="w-10 h-10 rounded-xl bg-indigo-600/10 border border-indigo-400/30 flex items-center justify-center text-indigo-600 font-bold">
+                  <i className="fa-solid fa-pen-to-square"></i>
                 </div>
                 <div>
                   <h3 className="font-extrabold text-base">แก้ไขข้อมูล Coaching</h3>
-                  <p className="text-xs text-indigo-600 font-bold">{editingRecord.fullName} ({editingRecord.nickname}) · {editingRecord.position}</p>
+                  <p className="text-xs text-indigo-600 font-bold">{editingRecord.fullName} ({editingRecord.nickname})</p>
                 </div>
               </div>
               <button
@@ -959,20 +827,6 @@ export function CoachingDashboard({ currentUser, showToast }: CoachingDashboardP
             </div>
 
             <form onSubmit={handleSaveEdit} className="space-y-4 text-xs">
-              
-              {/* Photo URL (ลิงก์รูปภาพพนักงาน) */}
-              <div>
-                <label className="block font-bold mb-1 text-slate-700">ลิงก์รูปภาพพนักงาน (Photo URL)</label>
-                <input
-                  type="url"
-                  placeholder="https://... หรือเว้นว่างเพื่อใช้รูปโปรไฟล์ระบบ"
-                  value={editForm.photoUrl || ''}
-                  onChange={e => setEditForm({ ...editForm, photoUrl: e.target.value })}
-                  className={`w-full rounded-xl px-3 py-2 border font-medium ${
-                    isLight ? 'bg-slate-50 border-slate-300 text-slate-900' : 'bg-slate-950 border-white/10 text-white'
-                  }`}
-                />
-              </div>
               
               {/* DISC Animal Type Select */}
               <div>

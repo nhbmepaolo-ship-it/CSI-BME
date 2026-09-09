@@ -46,28 +46,8 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ currentUser, s
   const [editClub, setEditClub] = useState<HappyLifeClub>('ชมรมเดิน-วิ่ง');
   const [editIsAdmin, setEditIsAdmin] = useState(false);
 
-  const [isSyncing, setIsSyncing] = useState(false);
-
   const loadData = () => {
     setEmployees(StorageService.getEmployees());
-  };
-
-  const handleSyncSheet = async () => {
-    setIsSyncing(true);
-    try {
-      const sheetId = StorageService.getGoogleSheetId();
-      const res = await StorageService.fetchAndSyncFromGoogleSheet(sheetId);
-      loadData();
-      if (res.success) {
-        showToast('success', 'ซิงค์ข้อมูลจาก Google Sheet เรียบร้อยแล้ว!');
-      } else {
-        showToast('error', res.message || 'ซิงค์ข้อมูลไม่สำเร็จ');
-      }
-    } catch (e: any) {
-      showToast('error', `เกิดข้อผิดพลาดในการซิงค์: ${e.message}`);
-    } finally {
-      setIsSyncing(false);
-    }
   };
 
   useEffect(() => {
@@ -115,7 +95,7 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ currentUser, s
       fullName: fullName.trim(),
       nickname: nickname.trim(),
       username: username.trim(),
-      password: password.trim() || `${username.trim()}@Nhealth`,
+      password: password.trim() || '123',
       img: defaultImg,
       club,
       status: 'active',
@@ -145,7 +125,7 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ currentUser, s
     setEditFullName(emp.fullName);
     setEditNickname(emp.nickname);
     setEditUsername(emp.username);
-    setEditPassword(emp.password || '123');
+    setEditPassword('');
     setEditImgUrl(emp.img);
     setEditClub(emp.club);
     setEditIsAdmin(emp.isAdmin || false);
@@ -169,7 +149,7 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ currentUser, s
       fullName: editFullName.trim(),
       nickname: editNickname.trim(),
       username: isSuperAdmin ? editUsername.trim() : editingEmp.username,
-      password: editPassword.trim(),
+      password: editPassword.trim() || editingEmp.password,
       img: editImgUrl.trim() || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(editNickname.trim())}&skinColor=f8d25c`,
       club: editClub,
       isAdmin: isSuperAdmin ? editIsAdmin : editingEmp.isAdmin
@@ -204,30 +184,12 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ currentUser, s
     loadData();
   };
 
-  const handleDeleteEmployee = (emp: Employee) => {
-    if (!isSuperAdmin) {
-      showToast('error', 'สิทธิ์การลบพนักงานเฉพาะ Admin เท่านั้น');
-      return;
-    }
-    const displayName = emp.fullName || emp.nickname || emp.username;
-    if (confirm(`คุณต้องการลบข้อมูลพนักงาน "${displayName}" (User: ${emp.username}) ออกจากระบบใช่หรือไม่?`)) {
-      StorageService.deleteEmployee(emp.id, emp.username);
-      showToast('success', `ลบข้อมูลพนักงาน ${displayName} เรียบร้อยแล้ว`);
-      loadData();
-    }
-  };
-
   const filteredEmployees = employees.filter(emp => {
-    // Filter out team placeholder accounts and dummy emp accounts
-    const f = (emp.fullName || '').toLowerCase().trim();
-    const n = (emp.nickname || '').toLowerCase().trim();
-    const u = (emp.username || '').toLowerCase().trim();
-    if (
-      f.includes('team') || n.includes('team') || f.includes('ทีม') || n.includes('ทีม') || u.includes('team') ||
-      u === 'emp_15' || u === 'emp_16' || u === 'emp_17' ||
-      (!f && !n) || (f === '()' && n === '()') || (f === '-' && n === '-') ||
-      (u.startsWith('emp_') && (!f || !n))
-    ) {
+    // Filter out team placeholder accounts
+    const f = (emp.fullName || '').toLowerCase();
+    const n = (emp.nickname || '').toLowerCase();
+    const u = (emp.username || '').toLowerCase();
+    if (f.includes('team') || n.includes('team') || f.includes('ทีม') || n.includes('ทีม') || u.includes('team') || u === 'emp_15') {
       return false;
     }
 
@@ -262,15 +224,13 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ currentUser, s
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={handleSyncSheet}
-            disabled={isSyncing}
-            className="px-4 py-2.5 rounded-2xl bg-emerald-600/80 hover:bg-emerald-500 text-white font-th font-bold text-xs shadow-lg flex items-center gap-2 transition-all border border-emerald-400/30 disabled:opacity-50"
+          <div
+            title="ข้อมูลพนักงานอัปเดตอัตโนมัติจาก Google Sheet ทุก 30 วินาที ไม่ต้องกดเอง"
+            className="px-3.5 py-2.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-bold flex items-center gap-2 select-none"
           >
-            <i className={`fa-solid fa-rotate ${isSyncing ? 'animate-spin' : ''}`}></i>
-            <span>{isSyncing ? 'กำลังซิงค์...' : 'ซิงค์ข้อมูลพนักงาน Google Sheet'}</span>
-          </button>
+            <i className="fa-solid fa-circle-check"></i>
+            <span>อัปเดตอัตโนมัติ</span>
+          </div>
 
           {isSuperAdmin && (
             <button
@@ -350,10 +310,11 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ currentUser, s
             <div>
               <label className="block text-xs font-bold text-slate-300 mb-1">Password</label>
               <input
-                type="text"
+                type="password"
+                autoComplete="new-password"
                 value={password}
                 onChange={e => setPassword(e.target.value)}
-                placeholder="รหัสผ่าน (ค่าเริ่มต้น <รหัสพนักงาน>@Nhealth)"
+                placeholder="รหัสผ่าน (ค่าเริ่มต้น 123)"
                 className="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs font-semibold outline-none focus:border-purple-500"
               />
             </div>
@@ -543,35 +504,22 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ currentUser, s
                   </span>
                 )}
 
-                <div className="flex items-center gap-1.5">
-                  {/* Status Toggle Button */}
-                  <button
-                    onClick={() => handleStatusToggle(emp)}
-                    disabled={!isSuperAdmin}
-                    title={!isSuperAdmin ? 'สิทธิ์เปลี่ยนสถานะการทำงานเฉพาะ Admin 3 ท่านเท่านั้น' : ''}
-                    className={`px-3 py-1.5 rounded-xl font-bold text-xs transition-all flex items-center gap-1.5 ${
-                      !isSuperAdmin ? 'opacity-70 cursor-not-allowed' : ''
-                    } ${
-                      emp.status === 'active'
-                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-rose-500/20 hover:text-rose-300 hover:border-rose-500/30'
-                        : 'bg-rose-500/20 text-rose-300 border border-rose-500/30 hover:bg-emerald-500/20 hover:text-emerald-300'
-                    }`}
-                  >
-                    <span className={`w-2 h-2 rounded-full ${emp.status === 'active' ? 'bg-emerald-400' : 'bg-rose-400'}`}></span>
-                    <span>{emp.status === 'active' ? 'Active' : 'ลาออกแล้ว'}</span>
-                  </button>
-
-                  {/* Delete Employee Button for Super Admin */}
-                  {isSuperAdmin && !isSelf && (
-                    <button
-                      onClick={() => handleDeleteEmployee(emp)}
-                      title="ลบข้อมูลพนักงานออกจากระบบ"
-                      className="p-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 border border-rose-500/20 hover:border-rose-500/40 text-xs transition-all"
-                    >
-                      <i className="fa-solid fa-trash-can"></i>
-                    </button>
-                  )}
-                </div>
+                {/* Status Toggle Button */}
+                <button
+                  onClick={() => handleStatusToggle(emp)}
+                  disabled={!isSuperAdmin}
+                  title={!isSuperAdmin ? 'สิทธิ์เปลี่ยนสถานะการทำงานเฉพาะ Admin 3 ท่านเท่านั้น' : ''}
+                  className={`px-3 py-1.5 rounded-xl font-bold text-xs transition-all flex items-center gap-1.5 ${
+                    !isSuperAdmin ? 'opacity-70 cursor-not-allowed' : ''
+                  } ${
+                    emp.status === 'active'
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-rose-500/20 hover:text-rose-300 hover:border-rose-500/30'
+                      : 'bg-rose-500/20 text-rose-300 border border-rose-500/30 hover:bg-emerald-500/20 hover:text-emerald-300'
+                  }`}
+                >
+                  <span className={`w-2 h-2 rounded-full ${emp.status === 'active' ? 'bg-emerald-400' : 'bg-rose-400'}`}></span>
+                  <span>{emp.status === 'active' ? 'Active' : 'ลาออกแล้ว'}</span>
+                </button>
               </div>
             </div>
           );
@@ -703,9 +651,11 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ currentUser, s
               <div>
                 <label className="block text-xs font-bold text-slate-300 mb-1">Password</label>
                 <input
-                  type="text"
+                  type="password"
                   value={editPassword}
                   onChange={e => setEditPassword(e.target.value)}
+                  placeholder="ปล่อยว่างไว้หากไม่ต้องการเปลี่ยนรหัสผ่าน"
+                  autoComplete="new-password"
                   className="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs font-semibold outline-none focus:border-purple-500"
                 />
               </div>

@@ -3,96 +3,6 @@ import { INITIAL_EMPLOYEES, INITIAL_CSI_RECORDS, INITIAL_VOTES, INITIAL_ACTIVITI
 import { INITIAL_ORG_CHART } from '../data/initialOrgChart';
 import { INITIAL_COACHING_RECORDS } from '../data/initialCoachingData';
 
-export const FIXED_GAS_WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycbxYN-S1ejO-6-IWM11q84UjCcV4X6xiSPy9YgkSKichlnoyQ7RSC6xW_SW_DN1UUmoXMA/exec';
-
-// Apps Script deployments that have been replaced. A URL saved in the browser
-// (localStorage 'csi_google_sheets_url') normally wins over the value in the
-// code, so without this list a device that once saved an old deployment URL
-// would keep posting to the retired script forever — the app would look
-// correctly configured while nothing reached the sheet. Any URL matching one of
-// these is automatically upgraded to the current deployment.
-const RETIRED_GAS_URLS = [
-  'AKfycbxjfDYcdMmOEdryWMUvb3zpbOYT5-VA1FEtDTC8jGkE8m4eh2qy0BmejNKkNYXB4AXb',
-  'AKfycby_TunZUkHu_9jTuyl0W8Fa-L0IVJ4_G3rCTrxzPEkZIrxDcNpZwbpMa0ejaIUTZlaX'
-];
-
-export function normalizeGasUrl(url?: string): string {
-  if (!url || typeof url !== 'string') return FIXED_GAS_WEBHOOK_URL;
-  let clean = url.trim();
-  if (!clean.includes('script.google.com')) return FIXED_GAS_WEBHOOK_URL;
-  if (RETIRED_GAS_URLS.some(id => clean.includes(id))) return FIXED_GAS_WEBHOOK_URL;
-  clean = clean.replace(/\/edit(\?.*)?$/, '/exec').replace(/\/dev(\?.*)?$/, '/exec');
-  if (!clean.endsWith('/exec') && !clean.includes('/exec?')) {
-    clean = clean.replace(/\/+$/, '') + '/exec';
-  }
-  return clean;
-}
-
-// Converts any timestamp this app has ever produced or read into ONE canonical
-// form: "YYYY-MM-DDTHH:MM:SS".
-//
-// This is needed because the same CSI response can be written in two different
-// shapes: the in-app form saves "DD/MM/YY:HH/MM/SS" (e.g. "08/09/26:15:54/27"),
-// while a row read back from Google Sheets was converted to ISO. Comparing those
-// two strings directly made one response look like two different responses, so
-// every submitted evaluation ended up stored twice — once locally and once again
-// after syncing — which is why the dashboard totals never matched the sheet.
-// Invalid dates also broke the dashboard's date filter, hiding records entirely.
-// Which sheet tab each write action appends to, so a write can be verified.
-const SHEET_TAB_FOR_ACTION: Record<string, string> = {
-  add_csi: 'CSI Electronic (การตอบกลับ)',
-  add_vote: 'Votes',
-  add_activity: 'กิจกรรม'
-};
-
-export function toCanonicalTimestamp(raw?: string): string {
-  if (!raw) return '';
-  const s = String(raw).trim();
-
-  // Already canonical / plain ISO
-  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})/);
-  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}T${iso[4]}:${iso[5]}:${iso[6]}`;
-
-  // Anything else: pull the numbers out, in day, month, year, h, m, s order.
-  const n = (s.match(/\d+/g) || []).map(v => parseInt(v, 10));
-  if (n.length >= 3 && !n.some(isNaN)) {
-    const day = n[0];
-    const month = n[1];
-    let year = n[2];
-    if (year > 2500) year -= 543;      // Buddhist year
-    else if (year < 100) year += 2000; // 2-digit year
-    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
-      const p2 = (v: number) => String(v).padStart(2, '0');
-      return `${year}-${p2(month)}-${p2(day)}T${p2(n[3] ?? 0)}:${p2(n[4] ?? 0)}:${p2(n[5] ?? 0)}`;
-    }
-  }
-  return s;
-}
-
-export function formatInternationalDateTime(dateInput?: string | Date | number): string {
-  let d: Date;
-  if (!dateInput) {
-    d = new Date();
-  } else if (typeof dateInput === 'string' && /^\d{2}\/\d{2}\/\d{2}:\d{2}\/\d{2}\/\d{2}$/.test(dateInput.trim())) {
-    return dateInput.trim();
-  } else {
-    d = new Date(dateInput);
-  }
-
-  if (isNaN(d.getTime())) {
-    d = new Date();
-  }
-
-  const day = String(d.getDate()).padStart(2, '0');
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const year = String(d.getFullYear()).slice(-2);
-  const hours = String(d.getHours()).padStart(2, '0');
-  const minutes = String(d.getMinutes()).padStart(2, '0');
-  const seconds = String(d.getSeconds()).padStart(2, '0');
-
-  return `${day}/${month}/${year}:${hours}/${minutes}/${seconds}`;
-}
-
 const KEYS = {
   EMPLOYEES: 'csi_bme_employees_v2',
   CSI_RECORDS: 'csi_bme_csi_records_v2',
@@ -106,6 +16,51 @@ const KEYS = {
 };
 
 export class StorageService {
+  // Generic caller for the multi-action Google Apps Script Web App (activities, votes,
+  // org chart). Used for BOTH pushing local changes out and pulling shared data in, so
+  // every device connected to the same GAS URL converges on the same data instead of
+  // each browser's localStorage being an island.
+  //
+  // Resolution order: (1) a URL explicitly saved in THIS browser's Settings, if any —
+  // lets someone override it locally if they ever need to; otherwise (2) the server-wide
+  // default from the GAS_WEB_APP_URL environment variable (see /api/gas-config), fetched
+  // once and cached for the rest of the session — this is what makes every device connect
+  // automatically without each one needing its own manual setup.
+  private static gasDefaultUrlCache: string | null = null;
+
+  private static async getGasUrl(): Promise<string> {
+    const local = (localStorage.getItem('csi_google_sheets_url') || '').trim();
+    if (local) return local;
+
+    if (this.gasDefaultUrlCache !== null) return this.gasDefaultUrlCache;
+    try {
+      const res = await fetch('/api/gas-config');
+      const data = await res.json().catch(() => ({}));
+      this.gasDefaultUrlCache = (data.gasUrl || '').trim();
+    } catch {
+      this.gasDefaultUrlCache = '';
+    }
+    return this.gasDefaultUrlCache;
+  }
+
+  private static async callGasAction(action: string, extra: Record<string, any> = {}): Promise<{ success: boolean; data?: any; message?: string }> {
+    const gasUrl = await this.getGasUrl();
+    if (!gasUrl) {
+      return { success: false, message: 'ยังไม่ได้ตั้งค่า Google Apps Script Web App URL' };
+    }
+    try {
+      const res = await fetch('/api/sync-sheets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gasUrl, payload: { action, ...extra } })
+      });
+      const data = await res.json().catch(() => ({ success: false, message: `HTTP ${res.status}` }));
+      return data;
+    } catch (err: any) {
+      return { success: false, message: err.message };
+    }
+  }
+
   // Org Chart
   static getOrgChart(): OrgChartConfig {
     try {
@@ -113,26 +68,6 @@ export class StorageService {
       if (data) {
         const parsed = JSON.parse(data);
         if (parsed && Array.isArray(parsed.nodes) && parsed.nodes.length > 0) {
-          let hasChanges = false;
-          parsed.nodes = parsed.nodes.map((node: any) => {
-            if (node.photoUrl) {
-              const healed = node.photoUrl
-                .replace('https://img2.pic.in.th/images/BME_563770..045756.png', 'https://img2.pic.in.th/BME_563770..045756.png')
-                .replace('https://img1.pic.in.th/images/BME_603892..045611.png', 'https://img2.pic.in.th/BME_603892..045611.png')
-                .replace('https://img2.pic.in.th/images/BME_563779..045629.png', 'https://img1.pic.in.th/images/BME_563779..045629.png')
-                .replace('https://img2.pic.in.th/images/BME_606675..045820.png', 'https://img2.pic.in.th/BME_606675..045820.png')
-                .replace('https://img2.pic.in.th/images/BME_612366..045835.png', 'https://img2.pic.in.th/BME_612366..045835.png')
-                .replace('https://img2.pic.in.th/S__6471705_0-removebg-preview.png', 'https://img1.pic.in.th/images/970d1e089ad78d07db702e1eab5698c6.png');
-              if (healed !== node.photoUrl) {
-                hasChanges = true;
-                return { ...node, photoUrl: healed };
-              }
-            }
-            return node;
-          });
-          if (hasChanges) {
-            this.saveOrgChart(parsed);
-          }
           return parsed;
         }
       }
@@ -149,6 +84,25 @@ export class StorageService {
     } catch (e) {
       console.error('Failed to save org chart:', e);
     }
+    // Push to the shared Google Sheet too (fire-and-forget) so other devices see the
+    // update on their next sync, instead of the org chart only living on this browser.
+    this.callGasAction('sync_orgchart', { orgChart: config });
+  }
+
+  // Pull the shared org chart from Google Sheets (last-write-wins) and store it locally.
+  // Called during the periodic global sync so every device converges on the same chart.
+  // Returns whether the org chart actually changed, so the caller can skip refreshing the
+  // screen when a poll finds nothing new (see App.tsx's refreshViewIfSafe).
+  static async pullOrgChartFromSheet(): Promise<boolean> {
+    const result = await this.callGasAction('get_orgchart');
+    if (result.success && result.data && Array.isArray(result.data.nodes) && result.data.nodes.length > 0) {
+      const before = localStorage.getItem(KEYS.ORG_CHART);
+      const after = JSON.stringify(result.data);
+      if (before === after) return false;
+      localStorage.setItem(KEYS.ORG_CHART, after);
+      return true;
+    }
+    return false;
   }
 
   static resetOrgChart(): OrgChartConfig {
@@ -187,10 +141,9 @@ export class StorageService {
     }
   }
 
-  static async updateCoachingRecord(id: string, updates: Partial<CoachingRecord>): Promise<{ list: CoachingRecord[]; syncResult: { success: boolean; message: string } }> {
+  static updateCoachingRecord(id: string, updates: Partial<CoachingRecord>): CoachingRecord[] {
     const list = this.getCoachingRecords();
     const idx = list.findIndex(r => r.id === id || r.empId === id);
-    let syncRes = { success: true, message: 'บันทึกสำเร็จ' };
     if (idx !== -1) {
       const updated = { ...list[idx], ...updates };
       // Recalculate total hours if any weekly hours updated
@@ -204,15 +157,117 @@ export class StorageService {
 
       list[idx] = updated;
       this.saveCoachingRecords(list);
-      // Auto-sync updated coaching record to Google Sheets
-      syncRes = await this.syncDataToGoogleSheet('update_coaching', updated);
+
+      // Push the updated coaching record to the shared Google Sheet too (fire-and-forget),
+      // the same way activities/votes/org chart already do, so an edit made on one device
+      // (e.g. updating progress %, hours, or topics) is visible from other devices too and
+      // actually lands in the "แผนพัฒนา" tab instead of only living in this browser.
+      this.callGasAction('sync_coaching', { coachingRecords: [updated] });
     }
-    return { list, syncResult: syncRes };
+    return list;
   }
 
   static resetCoachingRecords(): CoachingRecord[] {
     this.saveCoachingRecords(INITIAL_COACHING_RECORDS);
     return INITIAL_COACHING_RECORDS;
+  }
+
+  // Pull coaching records edited on OTHER devices out of the shared Google Sheet and merge
+  // them in (by empId, remote wins for matching ids since edits are pushed immediately).
+  // Called during the periodic global sync, same pattern as pullActivitiesFromSheet.
+  // Returns whether anything actually changed (see pullOrgChartFromSheet for why).
+  static async pullCoachingFromSheet(): Promise<boolean> {
+    const result = await this.callGasAction('get_coaching');
+    if (!result.success || !Array.isArray(result.data) || result.data.length === 0) return false;
+
+    const remote: CoachingRecord[] = result.data;
+    const local = this.getCoachingRecords();
+    const byEmpId = new Map<string, CoachingRecord>();
+    local.forEach(c => { if (c.empId) byEmpId.set(c.empId, c); });
+    remote.forEach(r => {
+      if (r && r.empId) byEmpId.set(r.empId, r); // remote is authoritative (latest edit wins)
+    });
+
+    const merged = Array.from(byEmpId.values());
+    if (JSON.stringify(merged) === JSON.stringify(local)) return false;
+    this.saveCoachingRecords(merged);
+    return true;
+  }
+
+  // Combined pull: fetches activities+votes+orgchart+coaching in ONE Apps Script call
+  // instead of four separate ones (see the "get_all" case added to the GAS script in
+  // ActivityDashboard.tsx). This is what the periodic background sync uses now — cuts the
+  // number of requests per poll (and therefore Google Apps Script executions / URL fetch
+  // quota usage) to a quarter of what four separate pullXFromSheet() calls would cost.
+  // Falls back automatically to the four separate calls if the deployed Apps Script is an
+  // older version that doesn't know the "get_all" action yet (so nothing breaks for anyone
+  // who hasn't redeployed).
+  static async pullAllSharedFromSheet(): Promise<boolean> {
+    const result = await this.callGasAction('get_all');
+    if (!result.success || !result.data) {
+      // Older Apps Script deployment without "get_all" — fall back to the four calls.
+      const [a, v, o, c] = await Promise.all([
+        this.pullActivitiesFromSheet(),
+        this.pullVotesFromSheet(),
+        this.pullOrgChartFromSheet(),
+        this.pullCoachingFromSheet()
+      ]);
+      return a || v || o || c;
+    }
+
+    let changed = false;
+    const { activities, votes, orgChart, coaching } = result.data;
+
+    if (Array.isArray(activities) && activities.length > 0) {
+      const local = this.getActivities();
+      const byId = new Map<string, ActivityRecord>();
+      local.forEach(a => byId.set(a.id, a));
+      activities.forEach((raw: any) => {
+        if (!raw || !raw.id) return;
+        if (raw.deleted) { byId.delete(raw.id); return; }
+        byId.set(raw.id, this.normalizeRemoteActivity(raw)); // see normalizeRemoteActivity for why
+      });
+      const merged = Array.from(byId.values());
+      if (merged.length !== local.length || JSON.stringify(merged) !== JSON.stringify(local)) {
+        changed = true;
+        this.saveActivities(merged);
+      }
+    }
+
+    if (Array.isArray(votes) && votes.length > 0) {
+      const local = this.getVotes();
+      const byId = new Map<string, VoteRecord>();
+      local.forEach(v => byId.set(v.id, v));
+      votes.forEach((v: any) => { if (v && v.id) byId.set(v.id, v); });
+      const merged = Array.from(byId.values());
+      if (merged.length !== local.length || JSON.stringify(merged) !== JSON.stringify(local)) {
+        changed = true;
+        this.saveVotes(merged);
+      }
+    }
+
+    if (orgChart && Array.isArray(orgChart.nodes) && orgChart.nodes.length > 0) {
+      const before = localStorage.getItem(KEYS.ORG_CHART);
+      const after = JSON.stringify(orgChart);
+      if (before !== after) {
+        changed = true;
+        localStorage.setItem(KEYS.ORG_CHART, after);
+      }
+    }
+
+    if (Array.isArray(coaching) && coaching.length > 0) {
+      const local = this.getCoachingRecords();
+      const byEmpId = new Map<string, CoachingRecord>();
+      local.forEach(c => { if (c.empId) byEmpId.set(c.empId, c); });
+      coaching.forEach((r: any) => { if (r && r.empId) byEmpId.set(r.empId, r); });
+      const merged = Array.from(byEmpId.values());
+      if (JSON.stringify(merged) !== JSON.stringify(local)) {
+        changed = true;
+        this.saveCoachingRecords(merged);
+      }
+    }
+
+    return changed;
   }
 
   // Status Overrides Helper
@@ -259,7 +314,6 @@ export class StorageService {
         fullName: 'Supattra Kaewsuwan',
         nickname: 'เปี้ยว',
         club: 'ชมรมเดิน-วิ่ง',
-        password: '563770@Nhealth',
         img: 'https://img2.pic.in.th/BME_563770..045756.png'
       },
       'MGR_BME': {
@@ -282,15 +336,13 @@ export class StorageService {
       const cleanNick = cleanStr(emp.nickname);
       const cleanFull = cleanStr(emp.fullName);
 
-      // Filter out team placeholder accounts and dummy emp accounts
+      // Filter out team placeholder accounts
       const isTeam = cleanFull.toLowerCase().includes('team') ||
         cleanNick.toLowerCase().includes('team') ||
         cleanFull.includes('ทีม') ||
         cleanNick.includes('ทีม') ||
         (emp.username && emp.username.toLowerCase().includes('team')) ||
-        emp.username === 'emp_15' ||
-        emp.username === 'emp_16' ||
-        emp.username === 'emp_17';
+        emp.username === 'emp_15';
 
       if (isTeam) {
         hasChanges = true;
@@ -303,16 +355,7 @@ export class StorageService {
         continue;
       }
 
-      // Filter out accounts with no name or blank parentheses
-      if (!cleanNick && !cleanFull) {
-        hasChanges = true;
-        continue;
-      }
-      if (cleanFull === '()' || cleanNick === '()' || cleanFull === '-' || cleanNick === '-') {
-        hasChanges = true;
-        continue;
-      }
-      if (emp.username?.startsWith('emp_') && (!cleanNick || !cleanFull)) {
+      if (!cleanNick && !cleanFull && !emp.username) {
         hasChanges = true;
         continue;
       }
@@ -333,19 +376,6 @@ export class StorageService {
       let updatedPass = emp.password;
 
       let img = emp.img;
-      if (img) {
-        const healed = img
-          .replace('https://img2.pic.in.th/images/BME_563770..045756.png', 'https://img2.pic.in.th/BME_563770..045756.png')
-          .replace('https://img1.pic.in.th/images/BME_603892..045611.png', 'https://img2.pic.in.th/BME_603892..045611.png')
-          .replace('https://img2.pic.in.th/images/BME_563779..045629.png', 'https://img1.pic.in.th/images/BME_563779..045629.png')
-          .replace('https://img2.pic.in.th/images/BME_606675..045820.png', 'https://img2.pic.in.th/BME_606675..045820.png')
-          .replace('https://img2.pic.in.th/images/BME_612366..045835.png', 'https://img2.pic.in.th/BME_612366..045835.png')
-          .replace('https://img2.pic.in.th/S__6471705_0-removebg-preview.png', 'https://img1.pic.in.th/images/970d1e089ad78d07db702e1eab5698c6.png');
-        if (healed !== img) {
-          img = healed;
-          hasChanges = true;
-        }
-      }
       if (img && img.includes('drive.google.com')) {
         const m = img.match(/\/d\/([a-zA-Z0-9_-]+)/) || img.match(/id=([a-zA-Z0-9_-]+)/);
         if (m && m[1]) {
@@ -447,26 +477,6 @@ export class StorageService {
     return list[idx];
   }
 
-  static deleteEmployee(id: string, username?: string): boolean {
-    const list = this.getEmployees();
-    const filtered = list.filter(e => e.id !== id && (!username || e.username !== username));
-    if (filtered.length === list.length) return false;
-
-    this.saveEmployees(filtered);
-
-    // Also remove from overrides if any
-    try {
-      const overrides = this.getStatusOverrides();
-      if (username) delete overrides[username.toLowerCase()];
-      delete overrides[id.toLowerCase()];
-      this.saveStatusOverrides(overrides);
-    } catch {
-      // Ignore
-    }
-
-    return true;
-  }
-
   // CSI Records
   static getCSIRecords(): CSIRecord[] {
     const data = localStorage.getItem(KEYS.CSI_RECORDS);
@@ -475,36 +485,7 @@ export class StorageService {
       return INITIAL_CSI_RECORDS;
     }
     try {
-      const parsed: CSIRecord[] = JSON.parse(data);
-      if (!Array.isArray(parsed)) return INITIAL_CSI_RECORDS;
-
-      // Repair records written by older versions of the app:
-      //  - timestamps stored in the in-app "DD/MM/YY:HH/MM/SS" shape are
-      //    converted to the canonical form, otherwise `new Date()` reads them as
-      //    Invalid Date and the dashboard's date filter silently drops them.
-      //  - copies of the same response (previously stored once by the form and
-      //    again by the sheet sync, under two different timestamp shapes) are
-      //    collapsed into one.
-      const seen = new Set<string>();
-      const cleaned: CSIRecord[] = [];
-      let changed = false;
-
-      for (const r of parsed) {
-        const canonical = toCanonicalTimestamp(r.timestamp);
-        if (canonical !== r.timestamp) changed = true;
-        const rec = canonical ? { ...r, timestamp: canonical } : r;
-
-        const key = `${canonical}_${rec.dept}_${rec.staffName}`;
-        if (seen.has(key)) {
-          changed = true;
-          continue;
-        }
-        seen.add(key);
-        cleaned.push(rec);
-      }
-
-      if (changed) this.saveCSIRecords(cleaned);
-      return cleaned;
+      return JSON.parse(data);
     } catch {
       return INITIAL_CSI_RECORDS;
     }
@@ -514,12 +495,10 @@ export class StorageService {
     localStorage.setItem(KEYS.CSI_RECORDS, JSON.stringify(records));
   }
 
-  static async addCSIRecord(record: CSIRecord): Promise<{ success: boolean; message: string }> {
+  static addCSIRecord(record: CSIRecord): void {
     const list = this.getCSIRecords();
-    list.unshift(record);
+    list.unshift({ ...record, source: 'local' });
     this.saveCSIRecords(list);
-    // Auto-sync new CSI record to Google Sheets
-    return await this.syncDataToGoogleSheet('add_csi', record);
   }
 
   // Vote Records
@@ -604,7 +583,7 @@ export class StorageService {
 
     const newVote: VoteRecord = {
       id: 'vote-' + Date.now(),
-      timestamp: formatInternationalDateTime(now),
+      timestamp: now.toISOString().replace('T', ' ').substring(0, 19),
       voter,
       category,
       nominee,
@@ -613,13 +592,39 @@ export class StorageService {
 
     votes.unshift(newVote);
     this.saveVotes(votes);
-    // Auto-sync vote record to Google Sheets
-    this.syncDataToGoogleSheet('add_vote', newVote);
+
+    // Push to the shared Google Sheet too (fire-and-forget) so this vote is visible
+    // from other devices too, not just this browser.
+    this.callGasAction('sync_votes', { votes: [newVote] });
+
     return {
       success: true,
       message: `บันทึกผลการโหวตรอบเดือน ${voteMonth} เรียบร้อยแล้ว!`,
       monthKey: voteMonth
     };
+  }
+
+  // Pull votes cast from OTHER devices out of the shared Google Sheet and merge them in
+  // (by id, so nothing is duplicated). Called during the periodic global sync.
+  // Returns whether anything actually changed (see pullOrgChartFromSheet for why).
+  static async pullVotesFromSheet(): Promise<boolean> {
+    const result = await this.callGasAction('get_votes');
+    if (!result.success || !Array.isArray(result.data)) return false;
+
+    const remoteVotes: VoteRecord[] = result.data;
+    if (remoteVotes.length === 0) return false;
+
+    const localVotes = this.getVotes();
+    const byId = new Map<string, VoteRecord>();
+    localVotes.forEach(v => byId.set(v.id, v));
+    remoteVotes.forEach(v => {
+      if (v && v.id) byId.set(v.id, v); // remote is authoritative for matching ids
+    });
+
+    const merged = Array.from(byId.values());
+    if (merged.length === localVotes.length && JSON.stringify(merged) === JSON.stringify(localVotes)) return false;
+    this.saveVotes(merged);
+    return true;
   }
 
   // Activity Records
@@ -658,18 +663,19 @@ export class StorageService {
   }
 
   static async syncToGoogleSheets(activities: ActivityRecord[], customUrl?: string): Promise<{ success: boolean; message: string }> {
-    const storedUrl = localStorage.getItem('csi_google_sheets_url');
-    const settings = this.getCardSettings();
-    const rawTargetUrl = customUrl || storedUrl || settings.lineWebhookUrl;
-    const targetUrl = normalizeGasUrl(rawTargetUrl);
+    const targetUrl = customUrl || (await this.getGasUrl());
+    if (!targetUrl || !targetUrl.trim()) {
+      return { success: false, message: 'กรุณาระบุ Web App URL ของ Google Apps Script ก่อน' };
+    }
 
     const payload = {
       action: 'sync_activities',
-      timestamp: formatInternationalDateTime(),
+      timestamp: new Date().toISOString(),
       totalRecords: activities.length,
       activities: activities.map(a => ({
         id: a.id,
-        date: formatInternationalDateTime(a.timestamp),
+        date: new Date(a.timestamp).toLocaleDateString('th-TH'),
+        timestamp: a.timestamp,
         username: a.username,
         fullName: a.fullName,
         nickname: a.nickname,
@@ -679,80 +685,37 @@ export class StorageService {
         hours: a.hours,
         minutes: a.minutes,
         totalMinutes: a.totalMinutes,
-        description: a.description || ''
+        description: a.description || '',
+        deleted: (a as any).deleted || false
       }))
     };
 
-    const isHtmlOrErrorString = (str: string) => {
-      if (!str) return true;
-      const lower = str.toLowerCase();
-      return lower.includes('<!doctype') || lower.includes('<html') || lower.includes('not_found') || lower.includes('could not be found') || lower.includes('page not found') || lower.includes('404') || lower.includes('sin1::');
-    };
-
-    // 1. Try server proxy route first
     try {
       const res = await fetch('/api/sync-sheets', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ gasUrl: targetUrl, payload })
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          gasUrl: targetUrl.trim(),
+          payload
+        })
       });
 
-      if (res.ok) {
-        const rawText = await res.text();
-        if (!isHtmlOrErrorString(rawText)) {
-          try {
-            const data = JSON.parse(rawText);
-            if (data && (data.success !== undefined || data.message)) {
-              return {
-                success: data.success ?? true,
-                message: data.message || 'ส่งข้อมูลลง Google Sheet เรียบร้อยแล้ว'
-              };
-            }
-          } catch (e) {
-            console.warn('Proxy returned non-JSON, attempting direct Google Apps Script request...');
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('Backend proxy /api/sync-sheets not reachable, using direct Apps Script fetch...');
-    }
-
-    // 2. Direct fallback to Google Apps Script
-    try {
-      const directRes = await fetch(targetUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify(payload)
-      });
-      const directText = await directRes.text();
-      if (!isHtmlOrErrorString(directText)) {
-        try {
-          const directData = JSON.parse(directText);
-          return {
-            success: directData.success ?? true,
-            message: directData.message || 'บันทึกข้อมูลลง Google Sheet สำเร็จ'
-          };
-        } catch (e) {
-          if (directRes.ok || directText.includes('SUCCESS') || directText.includes('เรียบร้อย')) {
-            return { success: true, message: 'บันทึกข้อมูลลง Google Sheet เรียบร้อยแล้ว' };
-          }
-        }
-      }
-    } catch (directErr) {
-      console.warn('Direct fetch failed, falling back to no-cors mode...');
-    }
-
-    // 3. Guaranteed Fallback: no-cors direct submission to Google Apps Script
-    try {
-      await fetch(targetUrl, {
-        method: 'POST',
-        mode: 'no-cors',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify(payload)
-      });
-      return { success: true, message: 'ส่งข้อมูลลง Google Sheet เรียบร้อยแล้ว (Direct Sync)' };
+      const data = await res.json();
+      return {
+        success: data.success,
+        message: data.message || (data.success ? 'ส่งข้อมูลเรียบร้อยแล้ว' : 'ไม่สามารถส่งข้อมูลได้')
+      };
     } catch (err: any) {
-      return { success: false, message: `ไม่สามารถส่งข้อมูลไปยัง Google Sheet ได้: ${err.message || 'โปรดตรวจสอบสัญญาณอินเทอร์เน็ต'}` };
+      console.error('Google Sheets sync error via proxy:', err);
+      const isParseError = err instanceof SyntaxError || /json/i.test(err.message || '');
+      return {
+        success: false,
+        message: isParseError
+          ? 'Google Apps Script ไม่ตอบกลับข้อมูลที่ถูกต้อง (มักเกิดจากสคริปต์ยังไม่ได้รับสิทธิ์อนุญาต หรือตั้งค่า "ผู้ที่มีสิทธิ์เข้าถึง" ไม่ใช่ "ทุกคน") — ลองเปิดตัวแก้ไข Apps Script แล้วกดปุ่มรัน (▷) ครั้งหนึ่งเพื่อยืนยันสิทธิ์ แล้วปรับใช้ใหม่อีกครั้ง'
+          : `เกิดข้อผิดพลาดในการเชื่อมต่อเซิร์ฟเวอร์: ${err.message || 'โปรดตรวจสอบการเชื่อมต่ออินเทอร์เน็ต'}`
+      };
     }
   }
 
@@ -777,81 +740,99 @@ export class StorageService {
     list.unshift(newRecord);
     this.saveActivities(list);
 
-    // Sync the new record to the "กิจกรรม" tab. syncToGoogleSheets sends an
-    // { activities: [...] } payload, which is the shape the Apps Script actually
-    // handles.
-    //
-    // Do NOT also call syncDataToGoogleSheet('add_activity', ...) here: the Apps
-    // Script has no 'add_activity' branch, so that call fell through to its
-    // generic fallback, which appends a raw JSON blob to whatever tab happens to
-    // be active in the spreadsheet — corrupting the CSI tab and making the data
-    // disagree with what the app shows.
+    // Auto sync new record to Google Sheets if Web App URL is configured
     this.syncToGoogleSheets([newRecord]);
 
     return newRecord;
   }
 
-  static updateActivity(id: string, updates: Partial<ActivityRecord>): ActivityRecord | null {
+  static deleteActivity(id: string): void {
+    const list = this.getActivities();
+    const target = list.find(a => a.id === id);
+    const remaining = list.filter(a => a.id !== id);
+    this.saveActivities(remaining);
+
+    // Push a soft-delete "tombstone" so this deletion also removes the record on
+    // other devices during their next pull, instead of only deleting it locally.
+    if (target) {
+      this.syncToGoogleSheets([{ ...target, deleted: true } as any]);
+    }
+  }
+
+  // Pull activities from OTHER devices out of the shared Google Sheet and merge them in
+  // (by id — remote wins for matching ids, since edits/deletes are pushed immediately).
+  // Called during the periodic global sync so every device converges on the same list.
+  // Returns whether anything actually changed (see pullOrgChartFromSheet for why).
+  // The Apps Script's ACTIVITY_COLS returns raw sheet rows shaped as
+  // {category, date, ...} (matching what syncToGoogleSheets sends when WRITING), not as
+  // {activityCategory, dateKey, ...} (what the ActivityRecord type / rest of the app
+  // actually reads). Records pulled straight off the sheet were silently missing their
+  // category everywhere it's displayed (badges, category breakdown chart) because of this
+  // — this reshapes a raw pulled row back into a proper ActivityRecord.
+  private static normalizeRemoteActivity(r: any): ActivityRecord & { deleted?: boolean } {
+    return {
+      ...r,
+      activityCategory: r.activityCategory || r.category || 'อื่นๆ',
+      dateKey: r.dateKey || (r.timestamp ? String(r.timestamp).substring(0, 10) : '')
+    };
+  }
+
+  static async pullActivitiesFromSheet(): Promise<boolean> {
+    const result = await this.callGasAction('get_activities');
+    if (!result.success || !Array.isArray(result.data)) return false;
+
+    const remote = result.data.map((r: any) => this.normalizeRemoteActivity(r));
+    if (remote.length === 0) return false;
+
+    const local = this.getActivities();
+    const byId = new Map<string, ActivityRecord>();
+    local.forEach(a => byId.set(a.id, a));
+
+    remote.forEach(r => {
+      if (!r || !r.id) return;
+      if (r.deleted) {
+        byId.delete(r.id); // remove records that were deleted on another device
+      } else {
+        byId.set(r.id, r); // remote is authoritative for matching ids (latest edit wins)
+      }
+    });
+
+    const merged = Array.from(byId.values());
+    if (merged.length === local.length && JSON.stringify(merged) === JSON.stringify(local)) return false;
+    this.saveActivities(merged);
+    return true;
+  }
+
+  // Correct a wrongly-entered record (e.g. hours typed in wrong) without losing its
+  // original id/timestamp. Also re-syncs the corrected record to Google Sheets (if a
+  // sync Web App URL is configured) so the correction isn't only local.
+  static updateActivity(
+    id: string,
+    updates: Partial<Pick<ActivityRecord, 'activityName' | 'description' | 'hours' | 'minutes' | 'activityCategory' | 'club'>>
+  ): ActivityRecord | null {
     const list = this.getActivities();
     const idx = list.findIndex(a => a.id === id);
     if (idx === -1) return null;
 
     const existing = list[idx];
-    const hours = updates.hours !== undefined ? Number(updates.hours) : existing.hours;
-    const minutes = updates.minutes !== undefined ? Number(updates.minutes) : existing.minutes;
-    const totalMinutes = (hours * 60) + minutes;
-
-    let timestamp = existing.timestamp;
-    let dateKey = existing.dateKey;
-    if (updates.timestamp) {
-      const d = new Date(updates.timestamp);
-      timestamp = d.toISOString();
-      dateKey = timestamp.substring(0, 10);
-    }
+    const hours = updates.hours !== undefined ? Number(updates.hours) || 0 : existing.hours;
+    const minutes = updates.minutes !== undefined ? Number(updates.minutes) || 0 : existing.minutes;
 
     const updated: ActivityRecord = {
       ...existing,
       ...updates,
       hours,
       minutes,
-      totalMinutes,
-      timestamp,
-      dateKey
+      totalMinutes: hours * 60 + minutes
     };
 
     list[idx] = updated;
     this.saveActivities(list);
 
-    // Send ONE well-formed update. Previously this appended a duplicate row via
-    // syncToGoogleSheets (the Apps Script can only append, so an "update" became
-    // a second row) and then added a junk fallback row via 'update_activity' —
-    // which is why activity hours in the sheet kept growing after every edit.
-    this.syncDataToGoogleSheet('update_activity', {
-      id: updated.id,
-      date: formatInternationalDateTime(updated.timestamp),
-      username: updated.username,
-      fullName: updated.fullName,
-      nickname: updated.nickname,
-      club: updated.club,
-      category: updated.activityCategory,
-      activityName: updated.activityName,
-      hours: updated.hours,
-      minutes: updated.minutes,
-      totalMinutes: updated.totalMinutes,
-      description: updated.description || ''
-    });
+    // Push the correction to Google Sheets too, if configured
+    this.syncToGoogleSheets([updated]);
 
     return updated;
-  }
-
-  static deleteActivity(id: string): void {
-    const list = this.getActivities();
-    const target = list.find(a => a.id === id);
-    const filtered = list.filter(a => a.id !== id);
-    this.saveActivities(filtered);
-    if (target) {
-      this.syncDataToGoogleSheet('delete_activity', { id, username: target.username, timestamp: target.timestamp });
-    }
   }
 
   // Auth helper
@@ -898,7 +879,7 @@ export class StorageService {
     const defaultToken = 'wg1swtQ3O2KBtBTa461HHn9gRzygFKVYykKBWUI3F4IPSk7HnbXNz+/3zn05pBnfVYvj3K+rz9FF1Hi+ZUXWShiuf1yEzRdNOVjsp6xOB1cPdhzSSxHQr/VrZYWn1I8HOsD9aP3zs0Npg8DRyfekYwdB04t89/1O/w1cDnyilFU=';
     const defaultGroupId = 'C1f1109f61de6683b2337dfa8d3a5ba4d';
     const defaultUserId = 'Ucbf8c9e32fc2606a570a51bbc595d5e9';
-    const defaultWebhook = 'https://script.google.com/macros/s/AKfycbxYN-S1ejO-6-IWM11q84UjCcV4X6xiSPy9YgkSKichlnoyQ7RSC6xW_SW_DN1UUmoXMA/exec';
+    const defaultWebhook = 'https://script.google.com/macros/s/AKfycby_TunZUkHu_9jTuyl0W8Fa-L0IVJ4_G3rCTrxzPEkZIrxDcNpZwbpMa0ejaIUTZlaX/exec';
 
     if (data) {
       try {
@@ -930,7 +911,7 @@ export class StorageService {
 
   // Google Sheet ID & Auto Pull
   static getGoogleSheetId(): string {
-    return localStorage.getItem(KEYS.SHEET_ID) || '1eswu63LgsBcdAZZeRvfnJ5v3SlkM7n1y3K5Hwbc-Ryw';
+    return localStorage.getItem(KEYS.SHEET_ID) || '11qoHRaakTjvDWvOekqTTlP2SFcqdfys6cT653wRfjUA';
   }
 
   static saveGoogleSheetId(id: string): void {
@@ -939,8 +920,9 @@ export class StorageService {
     }
   }
 
-  static async fetchAndSyncFromGoogleSheet(customSheetId?: string): Promise<{ success: boolean; totalFetched: number; message: string }> {
+  static async fetchAndSyncFromGoogleSheet(customSheetId?: string): Promise<{ success: boolean; totalFetched: number; message: string; changed: boolean }> {
     const sheetId = customSheetId || this.getGoogleSheetId();
+    let changed = false;
     try {
       let data: any = null;
 
@@ -963,6 +945,7 @@ export class StorageService {
         return {
           success: false,
           totalFetched: 0,
+          changed: false,
           message: data?.message || 'ไม่สามารถเชื่อมต่อดึงข้อมูลจาก Google Sheet ได้ โปรดตรวจสอบว่าได้เปิดสิทธิ์แชร์ "ทุกคนที่มีลิงก์ดูได้"'
         };
       }
@@ -971,25 +954,30 @@ export class StorageService {
       const fetchedEmp: Employee[] = data.employees || [];
 
       if (fetchedCsi.length > 0) {
-        // Identify a response by its actual content. The timestamp is compared
-        // in canonical form so a record saved by the in-app form and the same
-        // record read back from the sheet are recognised as ONE response.
-        const keyOf = (r: CSIRecord) =>
-          `${toCanonicalTimestamp(r.timestamp)}_${r.dept}_${r.staffName}`;
-
-        // The Google Sheet is the system of record, so after a successful fetch
-        // the app mirrors it exactly. Local-only rows are NOT carried over: they
-        // are responses whose write to the sheet failed, and keeping them was
-        // what made the dashboard totals disagree with the sheet.
-        const seen = new Set<string>();
-        const merged = fetchedCsi.filter(r => {
-          const k = keyOf(r);
-          if (seen.has(k)) return false;
-          seen.add(k);
-          return true;
-        });
-
-        this.saveCSIRecords(merged);
+        // The Google Sheet is the single source of truth for CSI evaluations (this app's
+        // own CSI form only ever writes to localStorage — see addCSIRecord — it never
+        // pushes back to the sheet). Previously this merged by only ADDING records whose
+        // timestamp+dept+staffName key wasn't already present, which meant any record that
+        // ever got written to this browser's cache — including a stale/mis-parsed one from
+        // an earlier bug, or a row later corrected/deleted in the sheet — stayed forever,
+        // since nothing ever removed it. That's what caused old garbage (e.g. fragments of
+        // a comment field like "ใจ"/"ดา" that had gotten miscategorized as a department name
+        // at some point) to keep showing up in the dashboard indefinitely.
+        //
+        // Fix: on every successful sync, REPLACE all previously sheet-sourced records with
+        // the fresh pull wholesale (tagged source:'sheet'), and keep ONLY the records that
+        // were submitted locally through this app's own form (tagged source:'local', which
+        // never exist in the sheet so must be preserved). Any older record with no `source`
+        // tag at all (from before this fix) is dropped here — self-healing away whatever
+        // garbage had accumulated, since it's indistinguishable from stale sheet data anyway.
+        const existing = this.getCSIRecords();
+        const localOnly = existing.filter(r => r.source === 'local');
+        const freshFromSheet = fetchedCsi.map(r => ({ ...r, source: 'sheet' as const }));
+        const nextCsi = [...localOnly, ...freshFromSheet];
+        if (JSON.stringify(nextCsi) !== JSON.stringify(existing)) {
+          changed = true;
+          this.saveCSIRecords(nextCsi);
+        }
       }
 
       if (fetchedEmp.length > 0) {
@@ -1040,7 +1028,7 @@ export class StorageService {
             ...f,
             status: finalStatus,
             club: existing?.club || f.club,
-            password: f.password || existing?.password || '123'
+            password: existing?.password || f.password
           });
         });
 
@@ -1061,12 +1049,41 @@ export class StorageService {
         });
 
         const updatedList = Array.from(empMap.values());
-        this.saveEmployees(updatedList);
+        if (JSON.stringify(updatedList) !== JSON.stringify(existingEmp)) {
+          changed = true;
+          this.saveEmployees(updatedList);
+        }
       }
 
-      const fetchedCoach: CoachingRecord[] = data.coachingRecords || [];
-      if (fetchedCoach.length > 0) {
-        this.saveCoachingRecords(fetchedCoach);
+      // Sync "แผนพัฒนา" (Coaching/IDP) records fetched from the Google Sheet
+      const fetchedCoaching: CoachingRecord[] = data.coachingRecords || [];
+      if (fetchedCoaching.length > 0) {
+        const existingCoaching = this.getCoachingRecords();
+        const coachMap = new Map<string, CoachingRecord>();
+        existingCoaching.forEach(c => {
+          if (c.empId) coachMap.set(c.empId, c);
+        });
+
+        fetchedCoaching.forEach(sheetRec => {
+          const existing = coachMap.get(sheetRec.empId);
+          coachMap.set(sheetRec.empId, {
+            ...sheetRec,
+            // Identity & plan fields always follow the current Google Sheet (source of truth)
+            // Weekly hour breakdown stays local since the sheet only tracks a single total hours column
+            hoursW1: existing?.hoursW1 ?? sheetRec.hoursW1,
+            hoursW2: existing?.hoursW2 ?? sheetRec.hoursW2,
+            hoursW3: existing?.hoursW3 ?? sheetRec.hoursW3,
+            hoursW4: existing?.hoursW4 ?? sheetRec.hoursW4,
+            hoursW5: existing?.hoursW5 ?? sheetRec.hoursW5,
+            hoursW6: existing?.hoursW6 ?? sheetRec.hoursW6
+          });
+        });
+
+        const nextCoaching = Array.from(coachMap.values());
+        if (JSON.stringify(nextCoaching) !== JSON.stringify(existingCoaching)) {
+          changed = true;
+          this.saveCoachingRecords(nextCoaching);
+        }
       }
 
       this.saveGoogleSheetId(sheetId);
@@ -1074,13 +1091,15 @@ export class StorageService {
       return {
         success: true,
         totalFetched: fetchedCsi.length,
-        message: `เชื่อมต่อและดึงข้อมูลจาก Google Sheet (ID: ${sheetId}) สำเร็จแล้ว! พบแบบประเมินทั้งหมด ${fetchedCsi.length} รายการ`
+        changed,
+        message: `เชื่อมต่อและดึงข้อมูลจาก Google Sheet (ID: ${sheetId}) สำเร็จแล้ว! พบแบบประเมินทั้งหมด ${fetchedCsi.length} รายการ${fetchedCoaching.length > 0 ? ` และแผนพัฒนา ${fetchedCoaching.length} รายการ` : ''}`
       };
     } catch (err: any) {
       console.error('Error fetching sheet data:', err);
       return {
         success: false,
         totalFetched: 0,
+        changed: false,
         message: `เกิดข้อผิดพลาดในการเชื่อมต่อ: ${err.message || 'โปรดตรวจสอบการเชื่อมต่ออินเทอร์เน็ต'}`
       };
     }
@@ -1179,13 +1198,22 @@ export class StorageService {
           const badReason = row[23] || '';
           const extraNote = row[24] || goodReason || '';
 
-          // Normalize the sheet's timestamp into the one canonical form used
-          // everywhere else, so the same row always produces the same value on
-          // every sync and can never be stored twice.
-          let formattedTime = toCanonicalTimestamp(timestampRaw);
-          if (!formattedTime) {
-            // Blank timestamp: derive a stable key from the row's own content.
-            formattedTime = `row-${i}-${dept}-${staffName}`;
+          let formattedTime = new Date().toISOString();
+          if (timestampRaw) {
+            const parts = timestampRaw.split(' ');
+            if (parts[0] && parts[0].includes('/')) {
+              const dateParts = parts[0].split('/');
+              if (dateParts.length === 3) {
+                const day = dateParts[0].padStart(2, '0');
+                const month = dateParts[1].padStart(2, '0');
+                let year = parseInt(dateParts[2], 10);
+                if (year > 2500) year -= 543;
+                const timeStr = parts[1] || '00:00:00';
+                formattedTime = `${year}-${month}-${day}T${timeStr}`;
+              }
+            } else {
+              formattedTime = timestampRaw;
+            }
           }
 
           csiRecords.push({
@@ -1211,79 +1239,44 @@ export class StorageService {
             if (staffCsv && !staffCsv.includes('google-signin') && !staffCsv.includes('<!DOCTYPE html>')) {
               const staffRows = parseCSV(staffCsv);
               if (staffRows.length > 1) {
-                // Check if row 0 contains manager names / row header
-                const row0Str = staffRows[0] ? staffRows[0].join(' ') : '';
-                if (row0Str.includes('Chalee') || row0Str.includes('Raschanee')) {
-                  employees.push({
-                    id: 'sheet-emp-MGR_BME',
-                    username: 'MGR_BME',
-                    password: 'Mgr-BME',
-                    fullName: 'Chalee Meksuwan',
-                    nickname: 'ปิ้ง',
-                    club: 'ชมรมเดิน-วิ่ง',
-                    img: 'https://img2.pic.in.th/S__6471704_0-removebg-preview.png',
-                    status: 'active',
-                    isAdmin: true
-                  });
-                  employees.push({
-                    id: 'sheet-emp-SPV_BME',
-                    username: 'SPV_BME',
-                    password: 'Spv-BME@PTP',
-                    fullName: 'Raschanee Majanit',
-                    nickname: 'มิน',
-                    club: 'ชมรมเดิน-วิ่ง',
-                    img: 'https://img1.pic.in.th/images/970d1e089ad78d07db702e1eab5698c6.png',
-                    status: 'active',
-                    isAdmin: true
-                  });
-                }
+                let fullNameIdx = 0;
+                let nicknameIdx = 1;
+                let imgIdx = 2;
+                let usernameIdx = 3;
+                let passIdx = 4;
+
+                const header = staffRows[0].map(h => (h || '').trim().toLowerCase());
+                header.forEach((col, idx) => {
+                  if ((col.includes('ชื่อ') && !col.includes('เล่น')) || col.includes('full') || col.includes('name')) fullNameIdx = idx;
+                  if (col.includes('เล่น') || col.includes('nick')) nicknameIdx = idx;
+                  if (col.includes('รูป') || col.includes('img') || col.includes('pic') || col.includes('photo') || col.includes('avatar')) imgIdx = idx;
+                  if (col.includes('user') || col.includes('รหัสพนักงาน') || col.includes('รหัส') || col.includes('id')) usernameIdx = idx;
+                  if (col.includes('pass') || col.includes('รหัสผ่าน')) passIdx = idx;
+                });
 
                 for (let j = 1; j < staffRows.length; j++) {
                   const sRow = staffRows[j];
                   if (sRow && sRow.length >= 2) {
                     const cleanStr = (val: string) => (val || '').replace(/\s*\(?https?:\/\/[^\s)]+\)?/gi, '').trim();
 
-                    const fullName = cleanStr(sRow[0] || '');
-                    const nickname = cleanStr(sRow[1] || fullName || '');
-                    let img = (sRow[2] || '').trim();
-                    const username = (sRow[3] || `emp_${j}`).trim();
-                    const password = (sRow[4] || '123').trim();
-
-                    if (img && img.includes('drive.google.com')) {
-                      const m = img.match(/\/d\/([a-zA-Z0-9_-]+)/) || img.match(/id=([a-zA-Z0-9_-]+)/);
-                      if (m && m[1]) {
-                        img = `https://drive.google.com/thumbnail?id=${m[1]}&sz=w1000`;
-                      }
-                    }
+                    const fullName = cleanStr(sRow[fullNameIdx] || '');
+                    const nickname = cleanStr(sRow[nicknameIdx] || fullName || '');
+                    let img = (sRow[imgIdx] || '').trim();
+                    const username = (sRow[usernameIdx] || `emp_${j}`).trim();
+                    const password = (sRow[passIdx] || '123').trim();
 
                     if (img && !img.startsWith('http')) {
                       img = `https://${img}`;
                     }
-
 
                     if (!img) {
                       img = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(nickname || fullName || 'user')}&skinColor=f8d25c`;
                     }
 
                     const uUpper = username.toUpperCase();
-                    const isTeamOrDummy = fullName.toLowerCase().includes('team') ||
-                      nickname.toLowerCase().includes('team') ||
-                      fullName.includes('ทีม') ||
-                      nickname.includes('ทีม') ||
-                      username.toLowerCase().includes('team') ||
-                      username === 'emp_15' ||
-                      username === 'emp_16' ||
-                      username === 'emp_17';
-                    if (isTeamOrDummy) continue;
-
-                    // Must have valid non-empty names
-                    if (!fullName && !nickname) continue;
-                    if (fullName === '()' || nickname === '()' || fullName === '-' || nickname === '-') continue;
-                    if (username.startsWith('emp_') && (!fullName || !nickname)) continue;
-
                     const isAdmin = uUpper.includes('ADMIN') || uUpper.includes('SPV') || uUpper.includes('MGR') || uUpper === '563770';
 
-                    if (fullName || nickname) {
+                    if (fullName || nickname || username) {
                       employees.push({
                         id: `sheet-emp-${username}`,
                         username,
@@ -1307,8 +1300,8 @@ export class StorageService {
         }
       }
 
-      // 3. Fetch Coaching tab client-side
-      const possibleCoachingTabs = ['Coaching', 'แผนพัฒนา', 'Coaching Plan', 'Sheet3'];
+      // 3. Fetch Coaching / แผนพัฒนา (try multiple common tab names)
+      const possibleCoachingTabs = ['แผนพัฒนา', 'แผนพัฒนาพนักงาน', 'Coaching', 'IDP', 'Coaching Records', 'แผนพัฒนา & Coaching', 'Sheet3'];
       const coachingRecords: CoachingRecord[] = [];
 
       for (const tabName of possibleCoachingTabs) {
@@ -1318,69 +1311,80 @@ export class StorageService {
           if (coachRes.ok) {
             const coachCsv = await coachRes.text();
             if (coachCsv && !coachCsv.includes('google-signin') && !coachCsv.includes('<!DOCTYPE html>')) {
-              const cRows = parseCSV(coachCsv);
-              if (cRows.length > 1) {
-                for (let k = 1; k < cRows.length; k++) {
-                  const cr = cRows[k];
-                  if (cr && cr.length >= 7) {
-                    const empId = (cr[1] || '').trim();
-                    const contractType = (cr[2] || 'Out source').trim();
-                    const position = (cr[3] || 'Engineer').trim();
-                    const fullName = (cr[4] || '').trim();
-                    const nickname = (cr[5] || '').trim();
-                    const animalRaw = (cr[6] || 'หมี').trim();
+              const coachRows = parseCSV(coachCsv);
+              if (coachRows.length > 1) {
+                let empIdIdx = 0, typeIdx = 1, posIdx = 2, fullIdx = 3, nickIdx = 4, animalIdx = 5, coachIdx = 6, t1Idx = 7, t2Idx = 8, t3Idx = 9, scoreIdx = 10, progIdx = 11, totalHoursIdx = 12;
 
-                    if (!fullName && !empId) continue;
+                const header = coachRows[0].map(h => (h || '').trim().toLowerCase());
+                header.forEach((col, idx) => {
+                  if (col.includes('รหัส') || col.includes('id') || col.includes('empid')) empIdIdx = idx;
+                  if (col.includes('สัญญา') || col.includes('contract') || col.includes('ประเภทพนักงาน')) typeIdx = idx;
+                  if (col.includes('ตำแหน่ง') || col.includes('position') || col.includes('role')) posIdx = idx;
+                  if ((col.includes('ชื่อ') && !col.includes('เล่น') && !col.includes('โค้ช')) || col.includes('full') || col.includes('name')) fullIdx = idx;
+                  if (col.includes('เล่น') || col.includes('nick')) nickIdx = idx;
+                  if (col.includes('สัตว์') || col.includes('disc') || col.includes('animal')) animalIdx = idx;
+                  if (col.includes('โค้ช') || col.includes('coach')) coachIdx = idx;
+                  if (col.includes('ลำดับที่ 1') || col.includes('เรื่องที่ 1') || col.includes('topic1') || col.includes('topic 1')) t1Idx = idx;
+                  if (col.includes('ลำดับที่ 2') || col.includes('เรื่องที่ 2') || col.includes('topic2') || col.includes('topic 2')) t2Idx = idx;
+                  if (col.includes('ลำดับที่ 3') || col.includes('เรื่องที่ 3') || col.includes('topic3') || col.includes('topic 3')) t3Idx = idx;
+                  if (col.includes('คะแนน') || col.includes('score') || col.includes('eval')) scoreIdx = idx;
+                  if (col.includes('ก้าวหน้า') || col.includes('progress') || col.includes('%')) progIdx = idx;
+                  if (col.includes('ชั่วโมง') || col.includes('hours') || col.includes('total')) totalHoursIdx = idx;
+                });
 
-                    const animalType = animalRaw.includes('กระทิง') ? 'กระทิง' : animalRaw.includes('อินทรีย์') ? 'อินทรีย์' : animalRaw.includes('หนู') ? 'หนู' : 'หมี';
+                for (let j = 1; j < coachRows.length; j++) {
+                  const cRow = coachRows[j];
+                  if (cRow && cRow.length >= 3) {
+                    const cleanStr = (val: string) => (val || '').trim();
 
-                    const parseNumFloat = (val: string, def = 0) => {
-                      const f = parseFloat(val);
-                      return isNaN(f) ? def : f;
-                    };
+                    const empId = cleanStr(cRow[empIdIdx] || `emp_${j}`);
+                    const contractType = (cleanStr(cRow[typeIdx]).toLowerCase().includes('full') ? 'Full Time' : 'Out source') as any;
+                    const position = cleanStr(cRow[posIdx] || 'Engineer');
+                    const fullName = cleanStr(cRow[fullIdx] || '');
+                    const nickname = cleanStr(cRow[nickIdx] || fullName || '');
 
-                    const hoursW1 = parseNumFloat(cr[52], 0);
-                    const hoursW2 = parseNumFloat(cr[53], 0);
-                    const hoursW3 = parseNumFloat(cr[54], 0);
-                    const hoursW4 = parseNumFloat(cr[55], 0);
-                    const hoursW5 = parseNumFloat(cr[56], 0);
-                    const hoursW6 = parseNumFloat(cr[57], 0);
-                    const progressStr = (cr[58] || '').trim();
-                    const progressPercent = progressStr.includes('%') ? parseFloat(progressStr) : parseNumFloat(progressStr, 50);
-                    const totalHours = parseNumFloat(cr[59], hoursW1 + hoursW2 + hoursW3 + hoursW4 + hoursW5 + hoursW6);
-                    const coachName = (cr[60] || 'ชาลี').trim();
+                    let animalRaw = cleanStr(cRow[animalIdx]);
+                    let animalType: 'กระทิง' | 'อินทรีย์' | 'หมี' | 'หนู' = 'หมี';
+                    if (animalRaw.includes('กระทิง') || animalRaw.toLowerCase().includes('bull')) animalType = 'กระทิง';
+                    else if (animalRaw.includes('อินทรีย์') || animalRaw.toLowerCase().includes('eagle')) animalType = 'อินทรีย์';
+                    else if (animalRaw.includes('หนู') || animalRaw.toLowerCase().includes('mouse')) animalType = 'หนู';
+                    else animalType = 'หมี';
 
-                    coachingRecords.push({
-                      id: `sheet-coach-${empId || k}`,
-                      empId: empId || `E${k}`,
-                      position,
-                      fullName,
-                      nickname: nickname || fullName,
-                      contractType: (contractType === 'Out source' ? 'Out source' : 'Full Time') as 'Out source' | 'Full Time',
-                      animalType,
-                      coachName,
-                      topic1: 'Active Listening & Communication',
-                      topic2: 'Problem Solving & Team Work',
-                      topic3: 'System Thinking & Execution',
-                      evaluationScore: 8,
-                      progressPercent,
-                      hoursW1,
-                      hoursW2,
-                      hoursW3,
-                      hoursW4,
-                      hoursW5,
-                      hoursW6,
-                      totalHours
-                    });
+                    const coachName = cleanStr(cRow[coachIdx] || 'ชาลี');
+                    const topic1 = cleanStr(cRow[t1Idx] || 'ยังไม่กำหนด');
+                    const topic2 = cleanStr(cRow[t2Idx] || 'ยังไม่กำหนด');
+                    const topic3 = cleanStr(cRow[t3Idx] || 'ยังไม่กำหนด');
+                    const evaluationScore = parseInt(cleanStr(cRow[scoreIdx]), 10) || 7;
+                    const progressPercent = parseInt(cleanStr(cRow[progIdx]), 10) || 50;
+                    const totalHours = parseFloat(cleanStr(cRow[totalHoursIdx])) || 6;
+
+                    if (fullName || nickname || empId) {
+                      coachingRecords.push({
+                        id: `coach-sheet-${empId}`,
+                        empId,
+                        contractType,
+                        position,
+                        fullName,
+                        nickname,
+                        animalType,
+                        coachName,
+                        topic1,
+                        topic2,
+                        topic3,
+                        evaluationScore,
+                        progressPercent,
+                        hoursW1: 1, hoursW2: 1, hoursW3: 1, hoursW4: 1, hoursW5: 1, hoursW6: 1,
+                        totalHours
+                      });
+                    }
                   }
                 }
-
                 if (coachingRecords.length > 0) break;
               }
             }
           }
         } catch (e) {
-          console.warn(`Attempt to fetch Coaching tab '${tabName}' skipped:`, e);
+          console.warn(`Attempt to fetch coaching tab '${tabName}' skipped:`, e);
         }
       }
 
@@ -1393,138 +1397,6 @@ export class StorageService {
     } catch (e: any) {
       console.error('Client-side Google Sheet fetch error:', e);
       return { success: false, message: `ไม่สามารถดึงข้อมูลจาก Google Sheet ได้: ${e.message}` };
-    }
-  }
-
-  // Reads how many data rows currently exist in a sheet tab. Used to verify that
-  // a write actually landed, instead of trusting an unverifiable response.
-  static async countSheetRows(sheetName: string): Promise<number | null> {
-    try {
-      const sheetId = this.getGoogleSheetId();
-      if (!sheetId) return null;
-      const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}&_=${Date.now()}`;
-      const res = await fetch(url, { cache: 'no-store' });
-      if (!res.ok) return null;
-      const text = await res.text();
-      if (!text) return null;
-      // Count non-empty lines, minus the header row.
-      const lines = text.split('\n').filter(l => l.trim().length > 0);
-      return Math.max(0, lines.length - 1);
-    } catch {
-      return null;
-    }
-  }
-
-  static async syncDataToGoogleSheet(action: string, payload: any): Promise<{ success: boolean; message: string }> {
-    try {
-      const storedUrl = localStorage.getItem('csi_google_sheets_url');
-      const settings = this.getCardSettings();
-      const gasUrl = normalizeGasUrl(storedUrl || settings.lineWebhookUrl);
-
-      const fullPayload = { action, sheetId: this.getGoogleSheetId(), ...payload };
-
-      const isHtmlOrErrorString = (str: string) => {
-        if (!str) return true;
-        const lower = str.toLowerCase();
-        return lower.includes('<!doctype') || lower.includes('<html') || lower.includes('not_found') || lower.includes('could not be found') || lower.includes('page not found') || lower.includes('404') || lower.includes('sin1::');
-      };
-
-      // 1. Try server proxy route first
-      try {
-        const res = await fetch('/api/sync-sheets', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ gasUrl, payload: fullPayload })
-        });
-
-        if (res.ok) {
-          const rawText = await res.text();
-          if (!isHtmlOrErrorString(rawText)) {
-            try {
-              const data = JSON.parse(rawText);
-              if (data && (data.success !== undefined || data.message)) {
-                return data;
-              }
-            } catch (e) {
-              console.warn('Backend proxy returned non-JSON text, falling back to direct request...');
-            }
-          }
-        }
-      } catch (e) {
-        console.warn('Backend proxy /api/sync-sheets not reachable, falling back to direct request...');
-      }
-
-      // 2. Direct request to Google Apps Script
-      try {
-        const directRes = await fetch(gasUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify(fullPayload)
-        });
-        const directText = await directRes.text();
-        if (!isHtmlOrErrorString(directText)) {
-          try {
-            const directData = JSON.parse(directText);
-            return directData;
-          } catch (e) {
-            if (directRes.ok || directText.includes('SUCCESS') || directText.includes('เรียบร้อย')) {
-              return { success: true, message: 'ส่งข้อมูลลง Google Sheet เรียบร้อยแล้ว' };
-            }
-          }
-        }
-      } catch (directErr) {
-        console.warn('Direct fetch failed, falling back to no-cors mode...');
-      }
-
-      // 3. Fallback no-cors direct submission.
-      //
-      // A no-cors request returns an OPAQUE response: the browser refuses to
-      // expose the status or body, so `await fetch(...)` resolves even when the
-      // request 404s, is rejected, or never reaches Google at all. The previous
-      // code returned success unconditionally here, which is why the app kept
-      // reporting "ส่งข้อมูลลง Google Sheet เรียบร้อยแล้ว" while nothing was
-      // actually written — the record only ever existed in the browser, and the
-      // dashboard totals drifted further from the sheet with every submission.
-      //
-      // Since the response can't be read, verify the write instead: count the
-      // sheet's rows before and after, and only report success if a row really
-      // appeared.
-      try {
-        const sheetTab = SHEET_TAB_FOR_ACTION[action];
-        const before = sheetTab ? await this.countSheetRows(sheetTab) : null;
-
-        await fetch(gasUrl, {
-          method: 'POST',
-          mode: 'no-cors',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify(fullPayload)
-        });
-
-        if (sheetTab && before !== null) {
-          // Give Apps Script a moment to append the row, then confirm.
-          for (let attempt = 0; attempt < 3; attempt++) {
-            await new Promise(r => setTimeout(r, 1200));
-            const after = await this.countSheetRows(sheetTab);
-            if (after !== null && after > before) {
-              return { success: true, message: 'บันทึกลง Google Sheet เรียบร้อยแล้ว' };
-            }
-          }
-          return {
-            success: false,
-            message:
-              'บันทึกลงเครื่องแล้ว แต่ยังไม่ขึ้น Google Sheet — ตรวจสอบว่าได้ตั้งค่า URL ของ Google Apps Script (Web App) ไว้ถูกต้อง และเผยแพร่แบบ "ทุกคนที่มีลิงก์" แล้วหรือยัง'
-          };
-        }
-
-        // No way to verify this action — say so rather than claiming success.
-        return { success: false, message: 'ส่งคำขอแล้ว แต่ไม่สามารถยืนยันได้ว่าข้อมูลขึ้น Google Sheet จริง' };
-      } catch (err: any) {
-        return { success: false, message: `ไม่สามารถส่งข้อมูลไปยัง Google Apps Script ได้: ${err.message}` };
-      }
-
-      return { success: true, message: 'บันทึกข้อมูลเรียบร้อยแล้ว' };
-    } catch (e: any) {
-      return { success: false, message: e.message || 'ไม่สามารถติดต่อ Google Apps Script ได้' };
     }
   }
 }

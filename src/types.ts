@@ -44,6 +44,7 @@ export interface CSIRecord {
   badStaff: string;
   badReason: string;
   extraNote: string;
+  source?: 'sheet' | 'local'; // 'sheet' = pulled from the Google Sheet (authoritative, replaced on every sync); 'local' = submitted through this app's own CSI form and never written back to the sheet, so it must survive a sync instead of being treated as stale
 }
 
 export interface VoteRecord {
@@ -91,7 +92,6 @@ export interface CoachingRecord {
   position: string;        // Manager, Supervisor, Engineer, Admin
   fullName: string;
   nickname: string;
-  photoUrl?: string;       // รูปถ่ายพนักงาน
   animalType: AnimalDISCType;
   coachName: string;       // e.g. 'ยงยุทธ', 'ชาลี'
   topic1: string;          // เรื่องที่ Coaching ลำดับที่ 1

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { CSIRecord, Employee } from '../types';
 import { DEPARTMENTS } from '../data/initialData';
-import { StorageService, formatInternationalDateTime } from '../services/storage';
+import { StorageService } from '../services/storage';
 
 interface CSIFormProps {
   onSuccessSubmitted: () => void;
@@ -76,7 +76,7 @@ export const CSIForm: React.FC<CSIFormProps> = ({ onSuccessSubmitted, showModal 
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedDept) {
       showModal('warning', 'ลืมเลือกแผนก!', 'กรุณาเลือกแผนกที่รับบริการ');
@@ -96,7 +96,7 @@ export const CSIForm: React.FC<CSIFormProps> = ({ onSuccessSubmitted, showModal 
     const goodStaffStr = Array.from(selectedStaffKeys).join(', ');
 
     const newRecord: CSIRecord = {
-      timestamp: formatInternationalDateTime(),
+      timestamp: new Date().toISOString(),
       site: 'PTP',
       division: 'Biomedical Engineering',
       dept: selectedDept,
@@ -123,11 +123,10 @@ export const CSIForm: React.FC<CSIFormProps> = ({ onSuccessSubmitted, showModal 
       extraNote: extraNote.trim()
     };
 
-    const result = await StorageService.addCSIRecord(newRecord);
-    setIsSubmitting(false);
-
-    if (result.success) {
-      showModal('success', 'ส่งสำเร็จ! ✨', 'บันทึกข้อมูลการประเมิน CSI ลง Google Sheet เรียบร้อยแล้วครับ!');
+    setTimeout(() => {
+      StorageService.addCSIRecord(newRecord);
+      setIsSubmitting(false);
+      showModal('success', 'ส่งสำเร็จ! ✨', 'ได้รับความเห็นของคุณแล้ว ขอบคุณที่ช่วยให้เราพัฒนาได้ทุกวันครับ');
       
       // Reset
       setSelectedDept('');
@@ -139,10 +138,7 @@ export const CSIForm: React.FC<CSIFormProps> = ({ onSuccessSubmitted, showModal 
       setExtraNote('');
       
       onSuccessSubmitted();
-    } else {
-      showModal('warning', 'แจ้งเตือนการบันทึก', `ระบบบันทึกในแอปพลิเคชันแล้ว แต่การซิงค์ลง Google Sheet แจ้งว่า: ${result.message}`);
-      onSuccessSubmitted();
-    }
+    }, 600);
   };
 
   return (

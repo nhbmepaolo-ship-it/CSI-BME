@@ -12,89 +12,171 @@ import {
   Legend,
   AreaChart,
   Area,
-  CartesianGrid,
-  LabelList
+  CartesianGrid
 } from 'recharts';
 import { ActivityRecord, Employee, HappyLifeClub } from '../types';
-import { StorageService, FIXED_GAS_WEBHOOK_URL, normalizeGasUrl } from '../services/storage';
+import { StorageService } from '../services/storage';
 import { HAPPY_LIFE_CLUBS } from '../data/initialData';
+
+// Google Apps Script Web App — the ONE script that makes activities, votes, and the org
+// chart genuinely shared across every device (instead of living only in each browser's
+// localStorage). Handles both writing (sync_*) and reading (get_*) so the app can push
+// local changes out AND pull in changes made from other devices during periodic sync.
+const GAS_MULTI_ACTION_SCRIPT = `function doPost(e) { return handleRequest(e); }
+function doGet(e) { return handleRequest(e); }
+
+// ทุกอุปกรณ์ที่ตั้งค่า Web App URL นี้ไว้ จะเห็นข้อมูลชุดเดียวกันเสมอ (อ่าน/เขียนชีทเดียวกัน)
+var ACTIVITY_SHEET = "กิจกรรม";
+var ACTIVITY_COLS = ["id","date","timestamp","username","fullName","nickname","club","category","activityName","hours","minutes","totalMinutes","description","deleted"];
+
+var VOTE_SHEET = "โหวต";
+var VOTE_COLS = ["id","timestamp","voter","category","nominee","voteMonth","deleted"];
+
+var ORGCHART_SHEET = "ผังองค์กร";
+
+var COACHING_SHEET = "แผนพัฒนา";
+var COACHING_COLS = ["id","empId","contractType","position","fullName","nickname","animalType","coachName","topic1","topic2","topic3","evaluationScore","progressPercent","hoursW1","hoursW2","hoursW3","hoursW4","hoursW5","hoursW6","totalHours"];
+
+function handleRequest(e) {
+  try {
+    var ss;
+    try { ss = SpreadsheetApp.getActiveSpreadsheet(); } catch (err) {}
+
+    // หากสร้างสคริปต์ที่ script.google.com (ไม่ได้เปิดจากหน้า Google Sheet) ให้ใส่ ID ของ Sheet
+    if (!ss) {
+      var SPREADSHEET_ID = "ใส่_ID_ของ_GOOGLE_SHEET_ตรงนี้"; // เช่น 1BxiMVs0XR...
+      ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    }
+
+    var contents = e && e.postData ? e.postData.contents : null;
+    var data = contents ? JSON.parse(contents) : (e && e.parameter && e.parameter.data ? JSON.parse(e.parameter.data) : {});
+    var action = data.action || "sync_activities"; // เผื่อกรณีเรียกแบบสคริปต์เวอร์ชันเก่าที่ไม่ส่ง action มา
+
+    switch (action) {
+      case "sync_activities": return upsertRecords(ss, ACTIVITY_SHEET, ACTIVITY_COLS, data.activities || []);
+      case "get_activities": return getRecords(ss, ACTIVITY_SHEET, ACTIVITY_COLS);
+      case "sync_votes": return upsertRecords(ss, VOTE_SHEET, VOTE_COLS, data.votes || []);
+      case "get_votes": return getRecords(ss, VOTE_SHEET, VOTE_COLS);
+      case "sync_orgchart": return saveBlob(ss, ORGCHART_SHEET, data.orgChart);
+      case "get_orgchart": return getBlob(ss, ORGCHART_SHEET);
+      case "sync_coaching": return upsertRecords(ss, COACHING_SHEET, COACHING_COLS, data.coachingRecords || []);
+      case "get_coaching": return getRecords(ss, COACHING_SHEET, COACHING_COLS);
+      // Combined read — fetches activities+votes+orgchart+coaching in ONE request instead
+      // of 4 separate ones, so the app's periodic background poll costs a quarter of the
+      // Apps Script executions / URL fetches it used to (quota-friendly).
+      case "get_all": return jsonOut({
+        success: true,
+        data: {
+          activities: getRecordsRaw(ss, ACTIVITY_SHEET, ACTIVITY_COLS),
+          votes: getRecordsRaw(ss, VOTE_SHEET, VOTE_COLS),
+          orgChart: getBlobRaw(ss, ORGCHART_SHEET),
+          coaching: getRecordsRaw(ss, COACHING_SHEET, COACHING_COLS)
+        }
+      });
+      default: return jsonOut({ success: false, message: "ไม่รู้จัก action: " + action });
+    }
+  } catch (err) {
+    return jsonOut({ success: false, message: "เกิดข้อผิดพลาด: " + err.toString() });
+  }
+}
+
+function getOrCreateSheet(ss, name, header) {
+  var sheet = ss.getSheetByName(name);
+  if (!sheet) {
+    sheet = ss.insertSheet(name);
+    sheet.appendRow(header);
+  } else if (sheet.getLastRow() === 0) {
+    sheet.appendRow(header);
+  }
+  return sheet;
+}
+
+// เพิ่มแถวใหม่ หรืออัปเดตแถวเดิมถ้ามี id ซ้ำอยู่แล้ว (กันข้อมูลซ้ำเวลาซิงค์ซ้ำๆ)
+function upsertRecords(ss, sheetName, cols, records) {
+  if (!records || records.length === 0) return jsonOut({ success: true, message: "ไม่มีข้อมูลให้บันทึก" });
+  var sheet = getOrCreateSheet(ss, sheetName, cols);
+  var lastRow = sheet.getLastRow();
+  var existingIds = lastRow > 1 ? sheet.getRange(2, 1, lastRow - 1, 1).getValues().map(function (r) { return String(r[0]); }) : [];
+
+  records.forEach(function (rec) {
+    var rowValues = cols.map(function (c) { return rec[c] !== undefined ? rec[c] : ""; });
+    var idx = existingIds.indexOf(String(rec.id));
+    if (idx === -1) {
+      sheet.appendRow(rowValues);
+      existingIds.push(String(rec.id));
+    } else {
+      sheet.getRange(idx + 2, 1, 1, cols.length).setValues([rowValues]);
+    }
+  });
+
+  return jsonOut({ success: true, message: "ซิงค์ " + records.length + " รายการเรียบร้อยแล้ว" });
+}
+
+function getRecords(ss, sheetName, cols) {
+  return jsonOut({ success: true, data: getRecordsRaw(ss, sheetName, cols) });
+}
+
+function getRecordsRaw(ss, sheetName, cols) {
+  var sheet = ss.getSheetByName(sheetName);
+  if (!sheet || sheet.getLastRow() <= 1) return [];
+
+  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, cols.length).getValues();
+  return rows.map(function (row) {
+    var obj = {};
+    cols.forEach(function (c, i) { obj[c] = row[i]; });
+    return obj;
+  });
+}
+
+// ผังองค์กรเป็นก้อนข้อมูลเดียว (ไม่ใช่รายการ) เลยเก็บเป็น JSON ในเซลล์เดียว แบบ last-write-wins
+function saveBlob(ss, sheetName, blob) {
+  var sheet = getOrCreateSheet(ss, sheetName, ["key", "value", "updatedAt"]);
+  var lastRow = sheet.getLastRow();
+  var keys = lastRow > 1 ? sheet.getRange(2, 1, lastRow - 1, 1).getValues().map(function (r) { return r[0]; }) : [];
+  var idx = keys.indexOf("config");
+  var rowValues = ["config", JSON.stringify(blob), new Date().toISOString()];
+  if (idx === -1) {
+    sheet.appendRow(rowValues);
+  } else {
+    sheet.getRange(idx + 2, 1, 1, 3).setValues([rowValues]);
+  }
+  return jsonOut({ success: true, message: "บันทึกผังองค์กรเรียบร้อยแล้ว" });
+}
+
+function getBlob(ss, sheetName) {
+  return jsonOut({ success: true, data: getBlobRaw(ss, sheetName) });
+}
+
+function getBlobRaw(ss, sheetName) {
+  var sheet = ss.getSheetByName(sheetName);
+  if (!sheet || sheet.getLastRow() <= 1) return null;
+  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 3).getValues();
+  for (var i = 0; i < rows.length; i++) {
+    if (rows[i][0] === "config") {
+      try {
+        return JSON.parse(rows[i][1]);
+      } catch (e) {
+        return null;
+      }
+    }
+  }
+  return null;
+}
+
+function jsonOut(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+}`;
 
 interface ActivityDashboardProps {
   currentUser: Employee | null;
 }
 
-const getProxiedImageUrl = (url?: string) => {
-  if (!url) return '';
-  if (url.startsWith('data:') || url.startsWith('blob:')) return url;
-  if (url.startsWith('http://') || url.startsWith('https://')) {
-    return `/api/image-proxy?url=${encodeURIComponent(url)}`;
-  }
-  return url;
-};
-
-const CustomXAxisTickWithAvatar = (props: any) => {
-  const { x, y, payload, data } = props;
-  const item = data && data[payload.index];
-  if (!item) return null;
-
-  const rawUrl = item.img || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(item.name || 'user')}`;
-  const avatarUrl = rawUrl;
-
-  return (
-    <g transform={`translate(${x},${y})`}>
-      <defs>
-        <clipPath id={`avatar-clip-${payload.index}`}>
-          <circle cx="0" cy="18" r="14" />
-        </clipPath>
-      </defs>
-      <circle cx="0" cy="18" r="16" fill="#0f172a" stroke={payload.index === 0 ? '#f59e0b' : payload.index === 1 ? '#94a3b8' : payload.index === 2 ? '#d97706' : '#10b981'} strokeWidth="2" />
-      <image
-        x="-14"
-        y="4"
-        width="28"
-        height="28"
-        href={avatarUrl}
-        clipPath={`url(#avatar-clip-${payload.index})`}
-        preserveAspectRatio="xMidYMid slice"
-      />
-      <text
-        x="0"
-        y="46"
-        textAnchor="middle"
-        fill="#e2e8f0"
-        fontSize="10"
-        fontWeight="bold"
-      >
-        {item.name}
-      </text>
-    </g>
-  );
-};
-
-const CustomTooltipWithPhoto = ({ active, payload }: any) => {
-  if (active && payload && payload.length) {
-    const data = payload[0].payload;
-    return (
-      <div className="bg-slate-900/95 border border-emerald-500/40 p-3 rounded-2xl shadow-2xl flex items-center gap-3 backdrop-blur-md z-50">
-        <img
-          src={data.img}
-          alt={data.fullName}
-          className="w-12 h-12 rounded-xl object-cover border-2 border-emerald-400 shadow-md"
-        />
-        <div>
-          <div className="font-bold text-xs text-white">{data.fullName} ({data.name})</div>
-          <div className="text-xs font-extrabold text-amber-300">{data.hours} ชั่วโมงสะสม</div>
-          <div className="text-[10px] text-slate-400">{data.username}</div>
-        </div>
-      </div>
-    );
-  }
-  return null;
-};
-
 export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUser }) => {
   const [activities, setActivities] = useState<ActivityRecord[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [editingActivity, setEditingActivity] = useState<ActivityRecord | null>(null);
+  const [editForm, setEditForm] = useState({ activityName: '', description: '', hours: 0, minutes: 0 });
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
 
   // Filter States
   const [selectedClub, setSelectedClub] = useState<string>('');
@@ -114,75 +196,13 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
 
   // Google Sheets Integration Modal
   const [showSheetsModal, setShowSheetsModal] = useState(false);
-  const [gasUrl, setGasUrl] = useState<string>(() => normalizeGasUrl(localStorage.getItem('csi_google_sheets_url')));
+  const [gasUrl, setGasUrl] = useState<string>(() => localStorage.getItem('csi_google_sheets_url') || '');
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-
-  // Edit Activity Modal State (แก้ไขจำนวนชั่วโมง / วันที่และเวลาที่เข้าร่วมกิจกรรมย้อนหลัง)
-  const [editingActivity, setEditingActivity] = useState<ActivityRecord | null>(null);
-  const [editDate, setEditDate] = useState<string>('');
-  const [editTime, setEditTime] = useState<string>('12:00');
-  const [editHours, setEditHours] = useState<number>(0);
-  const [editMinutes, setEditMinutes] = useState<number>(0);
-  const [editCategory, setEditCategory] = useState<string>('Happy Life');
-  const [editName, setEditName] = useState<string>('');
-  const [editDesc, setEditDesc] = useState<string>('');
 
   const loadData = () => {
     setActivities(StorageService.getActivities());
     setEmployees(StorageService.getEmployees().filter(e => e.status === 'active'));
-  };
-
-  const handleOpenEditModal = (act: ActivityRecord) => {
-    setEditingActivity(act);
-    const d = new Date(act.timestamp);
-    if (!isNaN(d.getTime())) {
-      const year = d.getFullYear();
-      const month = String(d.getMonth() + 1).padStart(2, '0');
-      const day = String(d.getDate()).padStart(2, '0');
-      setEditDate(`${year}-${month}-${day}`);
-      const hoursStr = String(d.getHours()).padStart(2, '0');
-      const minsStr = String(d.getMinutes()).padStart(2, '0');
-      setEditTime(`${hoursStr}:${minsStr}`);
-    } else {
-      setEditDate(new Date().toISOString().substring(0, 10));
-      setEditTime('12:00');
-    }
-    setEditHours(act.hours || 0);
-    setEditMinutes(act.minutes || 0);
-    setEditCategory(act.activityCategory || 'Happy Life');
-    setEditName(act.activityName || '');
-    setEditDesc(act.description || '');
-  };
-
-  const handleSaveEditActivity = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingActivity) return;
-
-    if (editHours === 0 && editMinutes === 0) {
-      alert('กรุณาระบุระยะเวลาเข้าร่วมกิจกรรมอย่างน้อย 1 นาที');
-      return;
-    }
-
-    const [hrs, mins] = (editTime || '12:00').split(':').map(Number);
-    const [y, m, d] = editDate.split('-').map(Number);
-    const combinedDate = new Date(y, m - 1, d, hrs || 0, mins || 0, 0, 0);
-    const isoTimestamp = combinedDate.toISOString();
-
-    const updated = StorageService.updateActivity(editingActivity.id, {
-      timestamp: isoTimestamp,
-      hours: editHours,
-      minutes: editMinutes,
-      activityCategory: editCategory as any,
-      activityName: editName.trim(),
-      description: editDesc.trim()
-    });
-
-    if (updated) {
-      loadData();
-      setEditingActivity(null);
-      alert('อัปเดตวัน เวลา และข้อมูลกิจกรรมเรียบร้อยแล้ว!');
-    }
   };
 
   useEffect(() => {
@@ -190,26 +210,10 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
   }, []);
 
   const photoMap = useMemo(() => {
-    const map: { [key: string]: string } = {};
+    const map: { [username: string]: string } = {};
     employees.forEach(e => {
-      if (!e.img) return;
-      const imgUrl = e.img;
-      if (e.username) {
-        map[e.username] = imgUrl;
-        map[e.username.toLowerCase().trim()] = imgUrl;
-      }
-      if (e.fullName) {
-        map[e.fullName] = imgUrl;
-        map[e.fullName.toLowerCase().trim()] = imgUrl;
-      }
-      if (e.nickname) {
-        map[e.nickname] = imgUrl;
-        map[e.nickname.toLowerCase().trim()] = imgUrl;
-      }
-      if (e.id) {
-        map[e.id] = imgUrl;
-        map[e.id.toLowerCase().trim()] = imgUrl;
-      }
+      map[e.username] = e.img;
+      map[e.fullName] = e.img;
     });
     return map;
   }, [employees]);
@@ -334,7 +338,6 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
         fullName: e.fullName,
         hours: Number((e.totalMinutes / 60).toFixed(1)),
         minutes: e.totalMinutes,
-        img: e.img,
         club: e.club
       }));
   }, [employeeStats]);
@@ -401,6 +404,30 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
     }
   };
 
+  const handleOpenEdit = (act: ActivityRecord) => {
+    setEditingActivity(act);
+    setEditForm({
+      activityName: act.activityName,
+      description: act.description || '',
+      hours: act.hours,
+      minutes: act.minutes
+    });
+  };
+
+  const handleSaveEdit = () => {
+    if (!editingActivity) return;
+    setIsSavingEdit(true);
+    StorageService.updateActivity(editingActivity.id, {
+      activityName: editForm.activityName.trim() || editingActivity.activityName,
+      description: editForm.description.trim(),
+      hours: Math.max(0, Number(editForm.hours) || 0),
+      minutes: Math.max(0, Math.min(59, Number(editForm.minutes) || 0))
+    });
+    setIsSavingEdit(false);
+    setEditingActivity(null);
+    loadData();
+  };
+
   const formatHoursMinutes = (totalMins: number) => {
     const h = Math.floor(totalMins / 60);
     const m = totalMins % 60;
@@ -435,22 +462,27 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
 
   // Sync to Web App URL (Google Apps Script)
   const handleSaveGasUrl = () => {
-    const cleanUrl = normalizeGasUrl(gasUrl);
-    setGasUrl(cleanUrl);
-    localStorage.setItem('csi_google_sheets_url', cleanUrl);
+    if (!gasUrl.trim()) {
+      setSyncMessage({ type: 'error', text: 'กรุณาระบุ Web App URL ก่อนบันทึก' });
+      return;
+    }
+    localStorage.setItem('csi_google_sheets_url', gasUrl.trim());
     setSyncMessage({ type: 'success', text: 'บันทึก Google Apps Script Web App URL เรียบร้อยแล้ว! (เปิดใช้งานซิงค์อัตโนมัติแล้ว)' });
   };
 
   const handleSyncToSheets = async () => {
-    const cleanUrl = normalizeGasUrl(gasUrl);
-    setGasUrl(cleanUrl);
+    if (!gasUrl.trim()) {
+      setSyncMessage({ type: 'error', text: 'กรุณาระบุ Web App URL ของ Google Apps Script ก่อนส่งข้อมูล' });
+      return;
+    }
+
     setIsSyncing(true);
     setSyncMessage(null);
 
     try {
-      localStorage.setItem('csi_google_sheets_url', cleanUrl);
+      localStorage.setItem('csi_google_sheets_url', gasUrl.trim());
 
-      const res = await StorageService.syncToGoogleSheets(filteredActivities, cleanUrl);
+      const res = await StorageService.syncToGoogleSheets(filteredActivities, gasUrl.trim());
       setSyncMessage({
         type: res.success ? 'success' : 'error',
         text: res.message
@@ -479,17 +511,14 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
-          <div 
+        <div className="flex items-center gap-3">
+          <button
             onClick={() => setShowSheetsModal(true)}
-            className="cursor-pointer px-3.5 py-2 rounded-2xl bg-emerald-950/80 hover:bg-emerald-900/80 border border-emerald-400/40 text-emerald-300 font-th font-bold text-xs flex items-center gap-2 shadow-lg transition-all group"
-            title="คลิกเพื่อดูรายละเอียดการเชื่อมต่อ Google Sheets"
+            className="px-4 py-2.5 rounded-2xl bg-emerald-600/80 hover:bg-emerald-500 text-white font-th font-bold text-xs border border-emerald-400/30 flex items-center gap-2 shadow-lg transition-all"
           >
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_8px_rgba(52,211,153,0.8)]"></span>
-            <i className="fa-solid fa-cloud-check text-emerald-400 text-sm"></i>
-            <span>ซิงค์ Google Sheets อัตโนมัติ</span>
-            <i className="fa-solid fa-circle-info text-emerald-400/60 text-xs group-hover:text-emerald-300 ml-1"></i>
-          </div>
+            <i className="fa-solid fa-file-excel text-emerald-200 text-sm"></i>
+            <span>เชื่อมต่อ Google Sheets</span>
+          </button>
 
           <div className="bg-emerald-500/20 border border-emerald-400/30 rounded-2xl px-5 py-2 text-center sm:text-right backdrop-blur-md">
             <div className="text-[10px] uppercase font-bold text-emerald-300 tracking-wider">ชั่วโมงสะสมรวมทั้งหมด</div>
@@ -695,26 +724,23 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
             {topEmployeeChartData.length > 0 ? (
               <div className="h-64 w-full pt-2">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={topEmployeeChartData} margin={{ top: 15, right: 10, left: -20, bottom: 45 }}>
+                  <BarChart data={topEmployeeChartData} margin={{ top: 10, right: 10, left: -20, bottom: 25 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#ffffff15" vertical={false} />
                     <XAxis
                       dataKey="name"
                       stroke="#94a3b8"
                       fontSize={11}
                       tickLine={false}
-                      interval={0}
-                      height={55}
-                      tick={<CustomXAxisTickWithAvatar data={topEmployeeChartData} />}
+                      angle={-25}
+                      textAnchor="end"
                     />
                     <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} />
-                    <Tooltip content={<CustomTooltipWithPhoto />} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px', color: '#fff', fontSize: '12px' }}
+                      formatter={(val: any) => [`${val} ชั่วโมง`, 'ชั่วโมงสะสม']}
+                      labelFormatter={(label, payload) => payload?.[0]?.payload?.fullName || label}
+                    />
                     <Bar dataKey="hours" radius={[6, 6, 0, 0]}>
-                      <LabelList
-                        dataKey="hours"
-                        position="top"
-                        formatter={(val: any) => `${val}ชม.`}
-                        style={{ fill: '#38bdf8', fontSize: '11px', fontWeight: 'bold' }}
-                      />
                       {topEmployeeChartData.map((_, index) => (
                         <Cell key={`cell-${index}`} fill={index === 0 ? '#f59e0b' : index === 1 ? '#cbd5e1' : index === 2 ? '#d97706' : '#10b981'} />
                       ))}
@@ -950,86 +976,59 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
                 <th className="p-3">ชื่อกิจกรรม</th>
                 <th className="p-3">ชั่วโมง/นาที</th>
                 <th className="p-3">รายละเอียด</th>
-                <th className="p-3 text-right">จัดการ</th>
+                {currentUser?.isAdmin && <th className="p-3 text-right">จัดการ</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
-              {filteredActivities.map(act => {
-                const canManage = currentUser?.isAdmin || (currentUser && (currentUser.username === act.username || currentUser.fullName === act.fullName));
-                return (
-                  <tr key={act.id} className="hover:bg-white/5 transition-colors">
-                    <td className="p-3 font-mono text-[11px] text-slate-300 whitespace-nowrap">
-                      <div className="flex items-center gap-1.5 text-white font-semibold">
-                        <i className="fa-regular fa-calendar text-emerald-400 text-[10px]"></i>
-                        <span>{new Date(act.timestamp).toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' })}</span>
-                      </div>
-                      <div className="flex items-center gap-1 text-[10px] text-amber-300/90 font-mono mt-0.5">
-                        <i className="fa-regular fa-clock text-[9px]"></i>
-                        <span>{new Date(act.timestamp).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.</span>
-                      </div>
-                    </td>
-                    <td className="p-3 font-bold text-white whitespace-nowrap">
-                      <div className="flex items-center gap-2">
-                        <img
-                          src={photoMap[act.username] || photoMap[act.username.toLowerCase().trim()] || photoMap[act.fullName] || photoMap[act.fullName.toLowerCase().trim()] || photoMap[act.nickname] || photoMap[act.nickname.toLowerCase().trim()] || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(act.nickname || act.fullName)}`}
-                          alt={act.nickname}
-                          className="w-7 h-7 rounded-full object-cover bg-slate-800 border border-emerald-400/50 flex-shrink-0 shadow-sm"
-                          onError={e => {
-                            (e.target as HTMLImageElement).src = `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(act.nickname || act.fullName)}`;
-                          }}
-                        />
-                        <span>{act.fullName} ({act.nickname})</span>
-                      </div>
-                    </td>
-                    <td className="p-3 text-emerald-300 font-semibold whitespace-nowrap">
-                      {act.club}
-                    </td>
-                    <td className="p-3">
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                        act.activityCategory === 'Happy Life' ? 'bg-emerald-500/20 text-emerald-200 border border-emerald-400/30' :
-                        act.activityCategory === 'HR-PTP' ? 'bg-teal-500/20 text-teal-200 border border-teal-400/30' :
-                        'bg-indigo-500/20 text-indigo-200 border border-indigo-400/30'
-                      }`}>
-                        {act.activityCategory}
-                      </span>
-                    </td>
-                    <td className="p-3 font-bold text-amber-300 whitespace-nowrap">
-                      {act.activityName}
-                    </td>
-                    <td className="p-3 font-extrabold text-white whitespace-nowrap">
-                      {act.hours} ชม. {act.minutes} นาที
-                    </td>
-                    <td className="p-3 text-slate-300 max-w-xs truncate">
-                      {act.description || '—'}
-                    </td>
+              {filteredActivities.map(act => (
+                <tr key={act.id} className="hover:bg-white/5 transition-colors">
+                  <td className="p-3 font-mono text-[11px] text-slate-300 whitespace-nowrap">
+                    {new Date(act.timestamp).toLocaleDateString('th-TH')}
+                  </td>
+                  <td className="p-3 font-bold text-white whitespace-nowrap">
+                    {act.fullName} ({act.nickname})
+                  </td>
+                  <td className="p-3 text-emerald-300 font-semibold whitespace-nowrap">
+                    {act.club}
+                  </td>
+                  <td className="p-3">
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                      act.activityCategory === 'Happy Life' ? 'bg-emerald-500/20 text-emerald-200 border border-emerald-400/30' :
+                      act.activityCategory === 'HR-PTP' ? 'bg-teal-500/20 text-teal-200 border border-teal-400/30' :
+                      'bg-indigo-500/20 text-indigo-200 border border-indigo-400/30'
+                    }`}>
+                      {act.activityCategory}
+                    </span>
+                  </td>
+                  <td className="p-3 font-bold text-amber-300 whitespace-nowrap">
+                    {act.activityName}
+                  </td>
+                  <td className="p-3 font-extrabold text-white whitespace-nowrap">
+                    {act.hours} ชม. {act.minutes} นาที
+                  </td>
+                  <td className="p-3 text-slate-300 max-w-xs truncate">
+                    {act.description || '—'}
+                  </td>
+                  {currentUser?.isAdmin && (
                     <td className="p-3 text-right whitespace-nowrap">
-                      {canManage ? (
-                        <div className="flex items-center justify-end gap-1.5">
-                          <button
-                            onClick={() => handleOpenEditModal(act)}
-                            className="bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-400/30 px-2.5 py-1 rounded-lg font-bold text-[11px] flex items-center gap-1 transition-all"
-                            title="แก้ไขวันที่/จำนวนชั่วโมงย้อนหลัง"
-                          >
-                            <i className="fa-solid fa-pen-to-square"></i>
-                            <span>แก้ไข</span>
-                          </button>
-                          {currentUser?.isAdmin && (
-                            <button
-                              onClick={() => handleDeleteActivity(act.id)}
-                              className="bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-400/30 p-1.5 rounded-lg font-bold text-[11px] transition-all"
-                              title="ลบรายการนี้"
-                            >
-                              <i className="fa-solid fa-trash-can"></i>
-                            </button>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-slate-600 text-[11px]">—</span>
-                      )}
+                      <button
+                        onClick={() => handleOpenEdit(act)}
+                        className="text-sky-400 hover:text-sky-300 p-1 font-bold text-xs mr-2"
+                        title="แก้ไขรายการนี้"
+                      >
+                        <i className="fa-solid fa-pen-to-square"></i>
+                      </button>
+                      <button
+                        onClick={() => handleDeleteActivity(act.id)}
+                        className="text-rose-400 hover:text-rose-300 p-1 font-bold text-xs"
+                        title="ลบรายการนี้"
+                      >
+                        <i className="fa-solid fa-trash-can"></i>
+                      </button>
                     </td>
-                  </tr>
-                );
-              })}
+                  )}
+                </tr>
+              ))}
               {filteredActivities.length === 0 && (
                 <tr>
                   <td colSpan={8} className="p-8 text-center text-slate-400">
@@ -1053,10 +1052,10 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
                 </div>
                 <div>
                   <h3 className="font-th font-extrabold text-lg text-white">
-                    วิธีเชื่อมต่อแอปกับ Google Sheets
+                    วิธีเชื่อมต่อแอปกับ Google Sheets (ฐานข้อมูลกลาง)
                   </h3>
                   <p className="text-xs text-slate-400">
-                    ซิงค์ข้อมูลกิจกรรม หรือคัดลอกลง Google Sheet ที่มีอยู่
+                    ตั้งค่าครั้งเดียว ใช้ได้ทั้งกิจกรรม, โหวตพนักงานในดวงใจ, และผังองค์กร — ข้อมูลจะแชร์ข้ามอุปกรณ์ได้จริงแล้ว
                   </p>
                 </div>
               </div>
@@ -1087,28 +1086,34 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
             </div>
 
             {/* Option B: Direct Sync via Google Apps Script */}
-            <div className="glass-card border border-emerald-500/30 rounded-2xl p-4 space-y-3">
+            <div className="glass-card border border-white/15 rounded-2xl p-4 space-y-3">
               <div className="flex items-center justify-between flex-wrap gap-2">
                 <div className="font-th font-extrabold text-sm text-teal-300 flex items-center gap-2">
                   <span className="w-6 h-6 rounded-full bg-teal-500 text-slate-950 font-black text-xs flex items-center justify-center">2</span>
-                  <span>วิธีที่ 2: ระบบเชื่อมต่ออัตโนมัติ (Fix Web App URL)</span>
+                  <span>วิธีที่ 2: เชื่อมต่ออัตโนมัติผ่าน Google Apps Script Web App (แนะนำ — ใช้ URL เดียวกับหน้าโหวต/ผังองค์กร)</span>
                 </div>
 
                 {/* Connection Status Badge */}
-                <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 text-[11px] font-bold px-2.5 py-1 rounded-full flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                  <span>เชื่อมต่ออัตโนมัติแล้ว (ไม่ต้องตั้งค่าเพิ่ม)</span>
-                </span>
+                {gasUrl.trim() ? (
+                  <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 text-[11px] font-bold px-2.5 py-1 rounded-full flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                    <span>บันทึก Web App URL แล้ว (พร้อมส่งข้อมูล)</span>
+                  </span>
+                ) : (
+                  <span className="bg-amber-500/20 text-amber-300 border border-amber-400/30 text-[11px] font-bold px-2.5 py-1 rounded-full flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-amber-400"></span>
+                    <span>ยังไม่ได้วาง Web App URL</span>
+                  </span>
+                )}
               </div>
 
-              <div className="p-3 bg-emerald-950/40 border border-emerald-500/30 rounded-xl space-y-1 text-xs text-emerald-200">
-                <p className="font-bold flex items-center gap-1.5 text-emerald-300">
-                  <i className="fa-solid fa-circle-check"></i>
-                  <span>ระบบตั้งค่า Web App URL ของ Google Apps Script ไว้เป็นค่าเริ่มต้นอัตโนมัติเรียบร้อยแล้ว</span>
-                </p>
-                <p className="text-[11px] text-slate-300 leading-relaxed">
-                  ทุกครั้งที่คุณบันทึกกิจกรรม ประเมิน CSI หรือลงคะแนน BME Star ระบบจะทำการส่งข้อมูลไปยัง Google Sheet โดยอัตโนมัติในพื้นหลังโดยที่คุณไม่ต้องกดปุ่มหรือตั้งค่าใดๆ เพิ่มเติม
-                </p>
+              <div className="space-y-2 text-xs text-slate-300 leading-relaxed">
+                <ol className="list-decimal list-inside space-y-1 text-slate-300">
+                  <li>เปิด Google Sheet ของคุณ แล้วไปที่เมนู <strong>ส่วนขยาย (Extensions)</strong> &gt; <strong>Apps Script</strong></li>
+                  <li>วางโค้ด Apps Script ลงในไฟล์ <code>Code.gs</code> แล้วกด <strong>การทำให้ใช้งานได้ (Deploy)</strong> &gt; <strong>การปรับใช้ใหม่ (New deployment)</strong></li>
+                  <li>เลือกประเภทเป็น <strong>เว็บแอป (Web app)</strong> และตั้งค่า "ผู้ที่มีสิทธิ์เข้าถึง" เป็น <strong>ทุกคน (Anyone)</strong></li>
+                  <li>คัดลอก <strong>URL ของเว็บแอป (Web App URL)</strong> ที่ลงท้ายด้วย <code>/exec</code> มาวางใส่ช่องด้านล่างนี้</li>
+                </ol>
               </div>
 
               {/* Troubleshooting warning checklist */}
@@ -1182,129 +1187,7 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
                 </span>
                 <button
                   onClick={() => {
-                    const code = `function doPost(e) { return handleRequest(e); }
-function doGet(e) { return handleRequest(e); }
-
-function handleRequest(e) {
-  try {
-    var ss;
-    try { ss = SpreadsheetApp.getActiveSpreadsheet(); } catch(err) {}
-    
-    if (!ss) {
-      var SPREADSHEET_ID = "1eswu63LgsBcdAZZeRvfnJ5v3SlkM7n1y3K5Hwbc-Ryw";
-      ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-    }
-
-    var contents = e && e.postData ? e.postData.contents : null;
-    var data = null;
-    if (contents) {
-      try { data = JSON.parse(contents); } catch(err) {}
-    } else if (e && e.parameter && e.parameter.data) {
-      try { data = JSON.parse(e.parameter.data); } catch(err) {}
-    }
-
-    if (!data) {
-      return ContentService.createTextOutput(JSON.stringify({ success: false, message: "ไม่มีข้อมูลส่งมา" }))
-        .setMimeType(ContentService.MimeType.JSON);
-    }
-
-    var action = data.action;
-
-    // 1. CSI Assessment
-    if (action === "add_csi" || data.csiRecord) {
-      var csi = data.csiRecord || data;
-      var sheet = ss.getSheetByName("CSI Electronic (การตอบกลับ)") || ss.getSheets()[0];
-      sheet.appendRow([
-        csi.timestamp || (Utilities.formatDate(new Date(), "GMT+7", "dd/MM/yy:HH/mm/ss")),
-        csi.site || "PTP",
-        csi.division || "Biomedical Engineering",
-        csi.dept || "",
-        csi.staffName || "",
-        csi.contactType || "",
-        csi.use_service1 || "ใช้บริการ",
-        csi.q1_1 || 5, csi.q1_2 || 5, csi.q1_3 || 5, csi.q1_4 || 5, csi.q1_5 || 5, csi.q1_6 || 5, csi.q1_7 || 5,
-        csi.use_service2 || "ใช้บริการ",
-        csi.q2_1 || 5, csi.q2_2 || 5, csi.q2_3 || 5, csi.q2_4 || 5, csi.q2_5 || 5,
-        csi.goodStaff || "",
-        csi.goodReason || "",
-        csi.badStaff || "",
-        csi.badReason || "",
-        csi.extraNote || ""
-      ]);
-      return ContentService.createTextOutput(JSON.stringify({ success: true, message: "บันทึกการประเมิน CSI สำเร็จ" }))
-        .setMimeType(ContentService.MimeType.JSON);
-    }
-
-    // 2. Coaching Data Recording
-    if (action === "update_coaching" || action === "save_coaching" || data.coachingRecord) {
-      var coach = data.coachingRecord || data;
-      var sheet = ss.getSheetByName("Coaching Data") || ss.getSheetByName("Coaching Logs");
-      if (!sheet) {
-        sheet = ss.insertSheet("Coaching Data");
-        sheet.appendRow(["วันที่บันทึก", "รหัสพนักงาน", "ชื่อ-นามสกุล", "ชื่อเล่น", "ตำแหน่ง", "ประเภทสัญญา", "ลักษณะสัตว์ (DISC)", "โค้ชผู้ดูแล", "W1 (ชม.)", "W2 (ชม.)", "W3 (ชม.)", "W4 (ชม.)", "W5 (ชม.)", "W6 (ชม.)", "ชั่วโมงรวม", "ความก้าวหน้า (%)"]);
-      }
-      sheet.appendRow([
-        (Utilities.formatDate(new Date(), "GMT+7", "dd/MM/yy:HH/mm/ss")),
-        coach.empId || "",
-        coach.fullName || "",
-        coach.nickname || "",
-        coach.position || "",
-        coach.contractType || "",
-        coach.animalType || "",
-        coach.coachName || "",
-        coach.hoursW1 || 0,
-        coach.hoursW2 || 0,
-        coach.hoursW3 || 0,
-        coach.hoursW4 || 0,
-        coach.hoursW5 || 0,
-        coach.hoursW6 || 0,
-        coach.totalHours || 0,
-        (coach.progressPercent || 0) + "%"
-      ]);
-      return ContentService.createTextOutput(JSON.stringify({ success: true, message: "บันทึกข้อมูล Coaching เรียบร้อยแล้ว!" }))
-        .setMimeType(ContentService.MimeType.JSON);
-    }
-
-    // 3. BME Star Vote
-    if (action === "add_vote" || data.voteRecord) {
-      var v = data.voteRecord || data;
-      var sheet = ss.getSheetByName("Votes") || ss.getSheetByName("BME Star") || ss.getActiveSheet();
-      sheet.appendRow([
-        v.timestamp || (Utilities.formatDate(new Date(), "GMT+7", "dd/MM/yy:HH/mm/ss")),
-        v.voter || "",
-        v.nominee || "",
-        v.category || "",
-        v.reason || ""
-      ]);
-      return ContentService.createTextOutput(JSON.stringify({ success: true, message: "บันทึกผลโหวตสำเร็จ" }))
-        .setMimeType(ContentService.MimeType.JSON);
-    }
-
-    // 4. Happy Life Activities
-    if (data.activities && data.activities.length > 0) {
-      var sheet = ss.getSheetByName("กิจกรรม") || ss.getSheetByName("ชีต8") || ss.getSheetByName("Sheet1") || ss.getActiveSheet();
-      if (sheet.getLastRow() === 0) {
-        sheet.appendRow(["วันที่ทำกิจกรรม", "รหัสพนักงาน", "ชื่อผู้บันทึก", "ชื่อเล่น", "ชมรม", "หมวดหมู่", "ชื่อกิจกรรม", "ชั่วโมง", "นาที", "นาทีรวม", "รายละเอียด"]);
-      }
-      data.activities.forEach(function(act) {
-        sheet.appendRow([act.date, act.username, act.fullName, act.nickname, act.club, act.category, act.activityName, act.hours, act.minutes, act.totalMinutes, act.description]);
-      });
-      return ContentService.createTextOutput(JSON.stringify({ success: true, message: "บันทึกกิจกรรมสำเร็จ" }))
-        .setMimeType(ContentService.MimeType.JSON);
-    }
-
-    // Fallback
-    var sheet = ss.getActiveSheet();
-    sheet.appendRow([(Utilities.formatDate(new Date(), "GMT+7", "dd/MM/yy:HH/mm/ss")), JSON.stringify(data)]);
-    return ContentService.createTextOutput(JSON.stringify({ success: true, message: "บันทึกข้อมูลเรียบร้อยแล้ว" }))
-      .setMimeType(ContentService.MimeType.JSON);
-
-  } catch(err) {
-    return ContentService.createTextOutput(JSON.stringify({ success: false, message: "ERROR: " + err.toString() }))
-      .setMimeType(ContentService.MimeType.JSON);
-  }
-}`;
-                    navigator.clipboard.writeText(code);
+                    navigator.clipboard.writeText(GAS_MULTI_ACTION_SCRIPT);
                     alert('คัดลอกสคริปต์ Apps Script สำเร็จ!');
                   }}
                   className="text-[11px] font-bold text-emerald-300 hover:underline"
@@ -1313,128 +1196,7 @@ function handleRequest(e) {
                 </button>
               </div>
               <pre className="p-3 bg-slate-950 border border-white/10 rounded-xl text-[11px] font-mono text-emerald-300/90 overflow-x-auto max-h-44">
-{`function doPost(e) { return handleRequest(e); }
-function doGet(e) { return handleRequest(e); }
-
-function handleRequest(e) {
-  try {
-    var ss;
-    try { ss = SpreadsheetApp.getActiveSpreadsheet(); } catch(err) {}
-    
-    if (!ss) {
-      var SPREADSHEET_ID = "1eswu63LgsBcdAZZeRvfnJ5v3SlkM7n1y3K5Hwbc-Ryw";
-      ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-    }
-
-    var contents = e && e.postData ? e.postData.contents : null;
-    var data = null;
-    if (contents) {
-      try { data = JSON.parse(contents); } catch(err) {}
-    } else if (e && e.parameter && e.parameter.data) {
-      try { data = JSON.parse(e.parameter.data); } catch(err) {}
-    }
-
-    if (!data) {
-      return ContentService.createTextOutput(JSON.stringify({ success: false, message: "ไม่มีข้อมูล" }))
-        .setMimeType(ContentService.MimeType.JSON);
-    }
-
-    var action = data.action;
-
-    // 1. CSI Assessment
-    if (action === "add_csi" || data.csiRecord) {
-      var csi = data.csiRecord || data;
-      var sheet = ss.getSheetByName("CSI Electronic (การตอบกลับ)") || ss.getSheets()[0];
-      sheet.appendRow([
-        csi.timestamp || (Utilities.formatDate(new Date(), "GMT+7", "dd/MM/yy:HH/mm/ss")),
-        csi.site || "PTP",
-        csi.division || "Biomedical Engineering",
-        csi.dept || "",
-        csi.staffName || "",
-        csi.contactType || "",
-        csi.use_service1 || "ใช้บริการ",
-        csi.q1_1 || 5, csi.q1_2 || 5, csi.q1_3 || 5, csi.q1_4 || 5, csi.q1_5 || 5, csi.q1_6 || 5, csi.q1_7 || 5,
-        csi.use_service2 || "ใช้บริการ",
-        csi.q2_1 || 5, csi.q2_2 || 5, csi.q2_3 || 5, csi.q2_4 || 5, csi.q2_5 || 5,
-        csi.goodStaff || "",
-        csi.goodReason || "",
-        csi.badStaff || "",
-        csi.badReason || "",
-        csi.extraNote || ""
-      ]);
-      return ContentService.createTextOutput(JSON.stringify({ success: true, message: "บันทึกการประเมิน CSI สำเร็จ" }))
-        .setMimeType(ContentService.MimeType.JSON);
-    }
-
-    // 2. Coaching Data Recording
-    if (action === "update_coaching" || action === "save_coaching" || data.coachingRecord) {
-      var coach = data.coachingRecord || data;
-      var sheet = ss.getSheetByName("Coaching Data") || ss.getSheetByName("Coaching Logs");
-      if (!sheet) {
-        sheet = ss.insertSheet("Coaching Data");
-        sheet.appendRow(["วันที่บันทึก", "รหัสพนักงาน", "ชื่อ-นามสกุล", "ชื่อเล่น", "ตำแหน่ง", "ประเภทสัญญา", "ลักษณะสัตว์ (DISC)", "โค้ชผู้ดูแล", "W1 (ชม.)", "W2 (ชม.)", "W3 (ชม.)", "W4 (ชม.)", "W5 (ชม.)", "W6 (ชม.)", "ชั่วโมงรวม", "ความก้าวหน้า (%)"]);
-      }
-      sheet.appendRow([
-        (Utilities.formatDate(new Date(), "GMT+7", "dd/MM/yy:HH/mm/ss")),
-        coach.empId || "",
-        coach.fullName || "",
-        coach.nickname || "",
-        coach.position || "",
-        coach.contractType || "",
-        coach.animalType || "",
-        coach.coachName || "",
-        coach.hoursW1 || 0,
-        coach.hoursW2 || 0,
-        coach.hoursW3 || 0,
-        coach.hoursW4 || 0,
-        coach.hoursW5 || 0,
-        coach.hoursW6 || 0,
-        coach.totalHours || 0,
-        (coach.progressPercent || 0) + "%"
-      ]);
-      return ContentService.createTextOutput(JSON.stringify({ success: true, message: "บันทึกข้อมูล Coaching เรียบร้อยแล้ว!" }))
-        .setMimeType(ContentService.MimeType.JSON);
-    }
-
-    // 3. BME Star Vote
-    if (action === "add_vote" || data.voteRecord) {
-      var v = data.voteRecord || data;
-      var sheet = ss.getSheetByName("Votes") || ss.getSheetByName("BME Star") || ss.getActiveSheet();
-      sheet.appendRow([
-        v.timestamp || (Utilities.formatDate(new Date(), "GMT+7", "dd/MM/yy:HH/mm/ss")),
-        v.voter || "",
-        v.nominee || "",
-        v.category || "",
-        v.reason || ""
-      ]);
-      return ContentService.createTextOutput(JSON.stringify({ success: true, message: "บันทึกผลโหวตสำเร็จ" }))
-        .setMimeType(ContentService.MimeType.JSON);
-    }
-
-    // 4. Happy Life Activities
-    if (data.activities && data.activities.length > 0) {
-      var sheet = ss.getSheetByName("กิจกรรม") || ss.getSheetByName("ชีต8") || ss.getSheetByName("Sheet1") || ss.getActiveSheet();
-      if (sheet.getLastRow() === 0) {
-        sheet.appendRow(["วันที่ทำกิจกรรม", "รหัสพนักงาน", "ชื่อผู้บันทึก", "ชื่อเล่น", "ชมรม", "หมวดหมู่", "ชื่อกิจกรรม", "ชั่วโมง", "นาที", "นาทีรวม", "รายละเอียด"]);
-      }
-      data.activities.forEach(function(act) {
-        sheet.appendRow([act.date, act.username, act.fullName, act.nickname, act.club, act.category, act.activityName, act.hours, act.minutes, act.totalMinutes, act.description]);
-      });
-      return ContentService.createTextOutput(JSON.stringify({ success: true, message: "บันทึกกิจกรรมสำเร็จ" }))
-        .setMimeType(ContentService.MimeType.JSON);
-    }
-
-    // Fallback
-    var sheet = ss.getActiveSheet();
-    sheet.appendRow([(Utilities.formatDate(new Date(), "GMT+7", "dd/MM/yy:HH/mm/ss")), JSON.stringify(data)]);
-    return ContentService.createTextOutput(JSON.stringify({ success: true, message: "บันทึกข้อมูลเรียบร้อยแล้ว" }))
-      .setMimeType(ContentService.MimeType.JSON);
-
-  } catch(err) {
-    return ContentService.createTextOutput(JSON.stringify({ success: false, message: "ERROR: " + err.toString() }))
-      .setMimeType(ContentService.MimeType.JSON);
-  }
-}`}
+                {GAS_MULTI_ACTION_SCRIPT}
               </pre>
             </div>
 
@@ -1449,216 +1211,77 @@ function handleRequest(e) {
           </div>
         </div>
       )}
-      {/* Edit Activity Modal (แก้ไขชั่วโมงหรือวันที่เข้าร่วมกิจกรรมย้อนหลัง) */}
+
+      {/* Edit Activity Modal — lets an admin correct wrongly-entered hours/details */}
       {editingActivity && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-amber-500/40 rounded-3xl p-6 max-w-lg w-full shadow-2xl space-y-5 animate-in fade-in zoom-in duration-200">
-            <div className="flex items-center justify-between border-b border-white/10 pb-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-amber-300 text-xl font-bold">
-                  <i className="fa-solid fa-pen-to-square"></i>
-                </div>
-                <div>
-                  <h3 className="font-th font-extrabold text-base text-white">
-                    แก้ไขกิจกรรมย้อนหลัง
-                  </h3>
-                  <p className="text-xs text-amber-300/80 font-medium">
-                    {editingActivity.fullName} ({editingActivity.nickname})
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setEditingActivity(null)}
-                className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-slate-300 flex items-center justify-center"
-              >
-                <i className="fa-solid fa-xmark"></i>
-              </button>
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="glass-panel rounded-2xl w-full max-w-md p-6 space-y-4">
+            <div>
+              <h3 className="text-base font-extrabold text-white">แก้ไขรายการกิจกรรม</h3>
+              <p className="text-xs text-slate-400 mt-1">
+                {editingActivity.fullName} ({editingActivity.nickname}) · {new Date(editingActivity.timestamp).toLocaleDateString('th-TH')}
+              </p>
             </div>
 
-            <form onSubmit={handleSaveEditActivity} className="space-y-4">
-              {/* Date and Time Inputs (แก้ไขย้อนหลังได้ทั้งวันที่และเวลา) */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-950/60 p-3.5 rounded-2xl border border-white/10">
-                {/* Date */}
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
-                      <i className="fa-solid fa-calendar text-emerald-400"></i>
-                      <span>วันที่ทำกิจกรรม</span>
-                    </label>
-                    <div className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => setEditDate(new Date().toISOString().substring(0, 10))}
-                        className="text-[10px] text-emerald-400 hover:text-emerald-300 font-bold px-1.5 py-0.5 rounded bg-emerald-500/10 hover:bg-emerald-500/20 transition-colors"
-                      >
-                        วันนี้
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const y = new Date();
-                          y.setDate(y.getDate() - 1);
-                          setEditDate(y.toISOString().substring(0, 10));
-                        }}
-                        className="text-[10px] text-slate-400 hover:text-slate-200 font-bold px-1.5 py-0.5 rounded bg-white/5 hover:bg-white/10 transition-colors"
-                      >
-                        เมื่อวาน
-                      </button>
-                    </div>
-                  </div>
-                  <input
-                    type="date"
-                    value={editDate}
-                    onChange={e => setEditDate(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/20 text-white font-mono text-xs outline-none focus:border-emerald-400"
-                    required
-                  />
-                </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-300 mb-1">ชื่อกิจกรรม</label>
+              <input
+                type="text"
+                value={editForm.activityName}
+                onChange={e => setEditForm({ ...editForm, activityName: e.target.value })}
+                className="w-full glass-input rounded-xl px-3 py-2 text-sm text-white"
+              />
+            </div>
 
-                {/* Time */}
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
-                      <i className="fa-solid fa-clock text-amber-400"></i>
-                      <span>เวลาที่เริ่มทำกิจกรรม</span>
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const now = new Date();
-                        const h = String(now.getHours()).padStart(2, '0');
-                        const m = String(now.getMinutes()).padStart(2, '0');
-                        setEditTime(`${h}:${m}`);
-                      }}
-                      className="text-[10px] text-amber-400 hover:text-amber-300 font-bold px-1.5 py-0.5 rounded bg-amber-500/10 hover:bg-amber-500/20 transition-colors"
-                    >
-                      เวลาตอนนี้
-                    </button>
-                  </div>
-                  <input
-                    type="time"
-                    value={editTime}
-                    onChange={e => setEditTime(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/20 text-white font-mono text-xs outline-none focus:border-amber-400"
-                    required
-                  />
-                </div>
-              </div>
-
-              {/* Hours and Minutes with quick presets */}
-              <div className="bg-slate-950/60 p-3.5 rounded-2xl border border-white/10 space-y-2">
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-300 mb-1">ชั่วโมง (Hours)</label>
-                    <input
-                      type="number"
-                      min="0"
-                      max="24"
-                      value={editHours}
-                      onChange={e => setEditHours(Math.max(0, parseInt(e.target.value) || 0))}
-                      className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/20 text-white text-center font-extrabold text-base outline-none focus:border-amber-400"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-300 mb-1">นาที (Minutes)</label>
-                    <input
-                      type="number"
-                      min="0"
-                      max="59"
-                      value={editMinutes}
-                      onChange={e => setEditMinutes(Math.max(0, Math.min(59, parseInt(e.target.value) || 0)))}
-                      className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/20 text-white text-center font-extrabold text-base outline-none focus:border-amber-400"
-                    />
-                  </div>
-                </div>
-
-                {/* Quick duration presets */}
-                <div className="flex items-center gap-1.5 pt-1 flex-wrap">
-                  <span className="text-[10px] text-slate-400 font-bold mr-0.5">ลัด:</span>
-                  {[
-                    { label: '30 นาที', h: 0, m: 30 },
-                    { label: '45 นาที', h: 0, m: 45 },
-                    { label: '1 ชม.', h: 1, m: 0 },
-                    { label: '1.5 ชม.', h: 1, m: 30 },
-                    { label: '2 ชม.', h: 2, m: 0 },
-                    { label: '3 ชม.', h: 3, m: 0 },
-                  ].map((preset, idx) => (
-                    <button
-                      key={idx}
-                      type="button"
-                      onClick={() => {
-                        setEditHours(preset.h);
-                        setEditMinutes(preset.m);
-                      }}
-                      className={`text-[10px] font-bold px-2 py-0.5 rounded-lg border transition-all ${
-                        editHours === preset.h && editMinutes === preset.m
-                          ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-sm'
-                          : 'bg-white/5 hover:bg-white/10 text-slate-300 border-white/10'
-                      }`}
-                    >
-                      {preset.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Category & Name */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-300 mb-1">หมวดหมู่</label>
-                  <select
-                    value={editCategory}
-                    onChange={e => setEditCategory(e.target.value)}
-                    className="w-full px-3 py-2.5 rounded-xl bg-slate-950 border border-white/20 text-white text-xs outline-none focus:border-amber-400"
-                  >
-                    <option value="Happy Life">Happy Life</option>
-                    <option value="HR-PTP">HR-PTP</option>
-                    <option value="อื่นๆ">อื่นๆ</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-300 mb-1">ชื่อกิจกรรม</label>
-                  <input
-                    type="text"
-                    value={editName}
-                    onChange={e => setEditName(e.target.value)}
-                    className="w-full px-3 py-2.5 rounded-xl bg-slate-950 border border-white/20 text-white text-xs outline-none focus:border-amber-400"
-                    required
-                  />
-                </div>
-              </div>
-
-              {/* Description */}
+            <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1">รายละเอียดเพิ่มเติม</label>
-                <textarea
-                  value={editDesc}
-                  onChange={e => setEditDesc(e.target.value)}
-                  rows={2}
-                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/20 text-white text-xs outline-none focus:border-amber-400 resize-none"
+                <label className="block text-xs font-bold text-slate-300 mb-1">ชั่วโมง</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={editForm.hours}
+                  onChange={e => setEditForm({ ...editForm, hours: Number(e.target.value) })}
+                  className="w-full glass-input rounded-xl px-3 py-2 text-sm text-white"
                 />
               </div>
-
-              {/* Action Buttons */}
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setEditingActivity(null)}
-                  className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-slate-300 font-bold text-xs"
-                >
-                  ยกเลิก
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-xs shadow-lg flex items-center gap-2"
-                >
-                  <i className="fa-solid fa-floppy-disk"></i>
-                  <span>บันทึกการแก้ไข</span>
-                </button>
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">นาที</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={59}
+                  value={editForm.minutes}
+                  onChange={e => setEditForm({ ...editForm, minutes: Number(e.target.value) })}
+                  className="w-full glass-input rounded-xl px-3 py-2 text-sm text-white"
+                />
               </div>
-            </form>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-300 mb-1">รายละเอียด</label>
+              <textarea
+                value={editForm.description}
+                onChange={e => setEditForm({ ...editForm, description: e.target.value })}
+                rows={3}
+                className="w-full glass-input rounded-xl px-3 py-2 text-sm text-white resize-none"
+              />
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <button
+                onClick={() => setEditingActivity(null)}
+                className="flex-1 px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-th font-bold text-xs border border-white/15"
+              >
+                ยกเลิก
+              </button>
+              <button
+                onClick={handleSaveEdit}
+                disabled={isSavingEdit}
+                className="flex-1 px-4 py-2.5 rounded-xl bg-sky-500 hover:bg-sky-600 text-white font-th font-bold text-xs disabled:opacity-50"
+              >
+                {isSavingEdit ? 'กำลังบันทึก...' : 'บันทึกการแก้ไข'}
+              </button>
+            </div>
           </div>
         </div>
       )}

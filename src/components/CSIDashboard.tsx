@@ -241,14 +241,13 @@ export const CSIDashboard: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
-          <button
-            onClick={() => handleSyncFromSheet()}
-            disabled={isSyncing}
-            className="px-4 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-800 text-white text-xs font-bold shadow-lg shadow-emerald-600/30 flex items-center gap-2 transition-all active:scale-95 cursor-pointer"
+          <div
+            title="ดึงข้อมูลจาก Google Sheet อัตโนมัติทุก 30 วินาที ไม่ต้องกดเอง"
+            className="px-3.5 py-2.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-bold flex items-center gap-2 select-none"
           >
-            <i className={`fa-solid ${isSyncing ? 'fa-spin fa-spinner' : 'fa-arrows-rotate'}`}></i>
-            <span>{isSyncing ? 'กำลังดึงข้อมูล...' : '⚡ ดึงข้อมูลล่าสุดจาก Sheet'}</span>
-          </button>
+            <i className={`fa-solid ${isSyncing ? 'fa-spinner fa-spin' : 'fa-circle-check'}`}></i>
+            <span>{isSyncing ? 'กำลังอัปเดตข้อมูล...' : 'อัปเดตข้อมูลอัตโนมัติ'}</span>
+          </div>
 
           <button
             onClick={() => setShowSheetModal(true)}
@@ -743,7 +742,7 @@ export const CSIDashboard: React.FC = () => {
                   type="text"
                   value={sheetId}
                   onChange={e => setSheetId(e.target.value)}
-                  placeholder="เช่น 1eswu63LgsBcdAZZeRvfnJ5v3SlkM7n1y3K5Hwbc-Ryw"
+                  placeholder="เช่น 11qoHRaakTjvDWvOekqTTlP2SFcqdfys6cT653wRfjUA"
                   className="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white font-mono text-xs outline-none focus:border-emerald-500"
                 />
                 <p className="text-[11px] text-slate-400 mt-1">

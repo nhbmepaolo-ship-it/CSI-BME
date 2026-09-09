@@ -12,46 +12,7 @@
   font-family: 'Sarabun', 'Inter', system-ui, -apple-system, sans-serif;
 }
 
-/* Print Styles for Org Chart Export & Window Print (Fit A4 Landscape) */
-@media print {
-  @page {
-    size: A4 landscape;
-    margin: 4mm;
-  }
-
-  body {
-    background-color: #eaf4fb !important;
-    color-adjust: exact !important;
-    -webkit-print-color-adjust: exact !important;
-    print-color-adjust: exact !important;
-    margin: 0 !important;
-    padding: 0 !important;
-  }
-
-  /* Hide header, navigation, sidebar, toast, buttons, modals */
-  header, nav, sidebar, button, .no-print, [role="dialog"] {
-    display: none !important;
-  }
-
-  /* Force display ONLY org-chart-print-area fitted onto A4 Landscape */
-  #org-chart-print-area {
-    visibility: visible !important;
-    position: relative !important;
-    left: 0 !important;
-    top: 0 !important;
-    width: 100% !important;
-    height: auto !important;
-    max-width: 100% !important;
-    margin: 0 auto !important;
-    padding: 12px !important;
-    box-sizing: border-box !important;
-    background: linear-gradient(135deg, #eaf4fb 0%, #f4fafe 50%, #d6ebf7 100%) !important;
-    border: none !important;
-    border-radius: 0 !important;
-    overflow: visible !important;
-    page-break-inside: avoid !important;
-  }
-}
+/* Frosted Glass Theme Utility Classes */
 .glass-panel {
   background: rgba(15, 23, 42, 0.45);
   backdrop-filter: blur(16px);
