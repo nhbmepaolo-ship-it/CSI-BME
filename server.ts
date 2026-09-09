@@ -1,8 +1,8 @@
 import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
-import { createApiApp } from './server/app';
-import { sendWeeklyCardIfConfigured } from './server/notify';
+import { createApiApp } from './server/app.js';
+import { sendWeeklyCardIfConfigured } from './server/notify.js';
 
 // This file is only used for LOCAL DEVELOPMENT (npm run dev) and TRADITIONAL NODE HOSTING
 // (npm start, e.g. on a VPS/Render/Railway where a long-running Node process is fine).

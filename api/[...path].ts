@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'http';
-import { createApiApp } from '../server/app';
+import { createApiApp } from '../server/app.js';
 
 // Vercel treats this file as a serverless function and routes every request under
 // /api/* to it (the [...path] filename is a catch-all, matching /api/image-proxy,

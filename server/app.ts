@@ -1,5 +1,5 @@
 import express from 'express';
-import { sendWeeklyCardIfConfigured } from './notify';
+import { sendWeeklyCardIfConfigured } from './notify.js';
 
 // All CSI BME PTP backend API routes live here, factored out of server.ts so the exact
 // same Express app can be used in two different runtimes:
@@ -628,6 +628,85 @@ export function createApiApp(): express.Express {
     } catch (err: any) {
       console.error('Telegram Send Error:', err);
       return res.status(500).json({ success: false, message: `เกิดข้อผิดพลาดในการส่ง Telegram: ${err.message}` });
+    }
+  });
+
+  // ตัวตรวจสอบการเชื่อมต่อแบบครบวงจร — เปิด /api/diagnose ในเบราว์เซอร์แล้วอ่านผลได้เลย
+  // ทดสอบทีละข้อต่อ: env var -> เรียก Apps Script -> อ่านข้อมูลกิจกรรม -> อ่านชีท CSI
+  // เพื่อชี้ให้ชัดว่าพังตรงจุดไหน แทนการไล่เดาทีละอย่าง
+  app.get('/api/diagnose', async (req, res) => {
+    const report: any = { checkedAt: new Date().toISOString(), steps: [] };
+    try {
+    const gasUrl = (process.env.GAS_WEB_APP_URL || '').trim();
+    report.steps.push({
+      step: '1. ตัวแปร GAS_WEB_APP_URL บน Vercel',
+      ok: !!gasUrl,
+      value: gasUrl ? gasUrl : '(ว่าง)',
+      hint: gasUrl
+        ? (gasUrl.endsWith('/exec') ? 'รูปแบบถูกต้อง' : 'URL ควรลงท้ายด้วย /exec')
+        : 'ยังไม่ได้ตั้งค่า หรือยังไม่ได้ Redeploy หลังตั้งค่า'
+    });
+
+    if (gasUrl) {
+      try {
+        const r = await fetchWithTimeout(gasUrl, 9000, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'get_activities' })
+        });
+        const text = await r.text();
+        let parsed: any = null;
+        try { parsed = JSON.parse(text); } catch { /* ไม่ใช่ JSON */ }
+
+        const rows = parsed && Array.isArray(parsed.data) ? parsed.data : null;
+        report.steps.push({
+          step: '2. เรียก Apps Script (get_activities)',
+          ok: !!(parsed && parsed.success),
+          httpStatus: r.status,
+          rowCount: rows ? rows.length : 0,
+          firstRow: rows && rows.length > 0 ? rows[0] : null,
+          rawResponse: parsed ? undefined : text.substring(0, 400),
+          hint: !parsed
+            ? 'Apps Script ไม่ได้ตอบเป็น JSON — มักแปลว่า Deployment ตั้ง Who has access ไม่ใช่ Anyone หรือยังไม่ได้อัปเดตสคริปต์เวอร์ชันใหม่'
+            : (rows && rows.length > 0
+              ? 'อ่านข้อมูลได้ปกติ'
+              : 'เชื่อมต่อได้ แต่แท็บ "กิจกรรม" ยังไม่มีข้อมูล หรือชื่อแท็บไม่ตรง')
+        });
+
+        if (rows && rows.length > 0) {
+          const f = rows[0];
+          const missing = ['id', 'timestamp', 'username', 'totalMinutes'].filter(k => !f[k] && f[k] !== 0);
+          report.steps.push({
+            step: '3. ตรวจรูปแบบคอลัมน์ของข้อมูลแถวแรก',
+            ok: missing.length === 0,
+            missingFields: missing,
+            hint: missing.length === 0
+              ? 'คอลัมน์ครบถ้วน ระบบควรแสดงผลได้'
+              : 'คอลัมน์ไม่ครบ — ให้เรียก ?data={"action":"setup_sheets"} ที่ Web App URL เพื่อจัดหัวตารางใหม่'
+          });
+        }
+      } catch (err: any) {
+        report.steps.push({
+          step: '2. เรียก Apps Script (get_activities)',
+          ok: false,
+          error: err.message,
+          hint: 'ต่อไม่ติดเลย — ตรวจว่า URL ถูกต้องและ Deploy เป็น Web App แบบ Anyone แล้ว'
+        });
+      }
+    }
+
+    report.summary = report.steps.every((s: any) => s.ok)
+      ? 'ทุกอย่างปกติ — ถ้าหน้าจอยังว่างให้กด Ctrl+Shift+R แล้วรอ 3 นาที'
+      : 'พบจุดที่มีปัญหา ดูรายละเอียดในแต่ละ step ด้านบน (ดู hint)';
+
+      res.json(report);
+    } catch (err: any) {
+      // อย่าปล่อยให้ตัวตรวจสอบเองพังจนทำให้ทั้งฟังก์ชันล่ม (500) — ตอบเป็นข้อความอ่านได้แทน
+      res.status(200).json({
+        ...report,
+        summary: 'ตัวตรวจสอบทำงานผิดพลาดเอง',
+        error: err && err.message ? err.message : String(err)
+      });
     }
   });
 
