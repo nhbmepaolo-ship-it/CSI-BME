@@ -73,11 +73,72 @@ function handleRequest(e) {
           coaching: getRecordsRaw(ss, COACHING_SHEET, COACHING_COLS)
         }
       });
+      // สร้าง/ซ่อมหัวตารางของทุกชีทในครั้งเดียว โดยไม่ต้องรอให้มีการบันทึกข้อมูลก่อน
+      // เปิด Web App URL ตรงๆ ต่อท้ายด้วย ?data={"action":"setup_sheets"} ก็เรียกได้
+      case "setup_sheets": {
+        var report = [];
+        var targets = [
+          { name: ACTIVITY_SHEET, cols: ACTIVITY_COLS },
+          { name: VOTE_SHEET, cols: VOTE_COLS },
+          { name: COACHING_SHEET, cols: COACHING_COLS }
+        ];
+        targets.forEach(function (t) {
+          var r = ensureSchema(ss, t.name, t.cols);
+          report.push({ sheet: t.name, columns: r.cols, repaired: r.migrated });
+        });
+        getOrCreateSheet(ss, ORGCHART_SHEET, ["key", "value", "updatedAt"]);
+        report.push({ sheet: ORGCHART_SHEET, columns: ["key", "value", "updatedAt"], repaired: false });
+        return jsonOut({ success: true, message: "ตรวจสอบและจัดหัวตารางครบทุกชีทแล้ว", data: report });
+      }
       default: return jsonOut({ success: false, message: "ไม่รู้จัก action: " + action });
     }
   } catch (err) {
     return jsonOut({ success: false, message: "เกิดข้อผิดพลาด: " + err.toString() });
   }
+}
+
+// ตารางเทียบชื่อหัวคอลัมน์ -> ชื่อฟิลด์มาตรฐาน
+// จำเป็นเพราะแท็บ "กิจกรรม" ในชีทจริงอาจถูกสร้างไว้ก่อนด้วยหัวตารางภาษาไทย และมีจำนวน/
+// ลำดับคอลัมน์ไม่ตรงกับ ACTIVITY_COLS (เช่น ไม่มีคอลัมน์ timestamp) ถ้าอ่านโดยนับตำแหน่ง
+// คอลัมน์แบบเดิม ข้อมูลจะเลื่อนผิดช่องทั้งแถว (รหัสพนักงานกลายเป็น timestamp ฯลฯ)
+// ทำให้ชั่วโมงกิจกรรมขึ้นเป็น 0 ทั้งหมด จึงต้องจับคู่ด้วย "ชื่อหัวตาราง" แทน
+var HEADER_ALIASES = {
+  "id": "id", "ID": "id", "รหัส": "id",
+  "date": "date", "วันที่": "date", "วันที่ทำกิจกรรม": "date",
+  "timestamp": "timestamp", "เวลาบันทึก": "timestamp", "วันเวลาที่บันทึก": "timestamp",
+  "username": "username", "รหัสพนักงาน": "username", "user": "username",
+  "fullName": "fullName", "ชื่อผู้บันทึก": "fullName", "ชื่อ-นามสกุล": "fullName", "ชื่อพนักงาน": "fullName",
+  "nickname": "nickname", "ชื่อเล่น": "nickname",
+  "club": "club", "ชมรม": "club",
+  "category": "category", "หมวดหมู่": "category", "ประเภท": "category",
+  "activityName": "activityName", "ชื่อกิจกรรม": "activityName", "กิจกรรม": "activityName",
+  "hours": "hours", "ชั่วโมง": "hours",
+  "minutes": "minutes", "นาที": "minutes",
+  "totalMinutes": "totalMinutes", "นาทีรวม": "totalMinutes", "รวมนาที": "totalMinutes",
+  "description": "description", "รายละเอียด": "description", "หมายเหตุ": "description",
+  "deleted": "deleted", "ลบแล้ว": "deleted",
+  "voter": "voter", "ผู้โหวต": "voter",
+  "nominee": "nominee", "ผู้ถูกโหวต": "nominee",
+  "voteMonth": "voteMonth", "เดือนที่โหวต": "voteMonth"
+};
+
+function canonicalField(headerCell) {
+  var key = String(headerCell || "").trim();
+  if (HEADER_ALIASES[key]) return HEADER_ALIASES[key];
+  return key; // หัวตารางที่ไม่รู้จัก ใช้ชื่อเดิมไปเลย
+}
+
+// อ่านหัวตารางจริงของชีท แล้วคืนรายชื่อฟิลด์ตามลำดับคอลัมน์จริง
+// ถ้าชีทยังว่าง (ไม่มีหัวตาราง) ให้ใช้ cols มาตรฐานแทน
+function resolveSheetCols(sheet, cols) {
+  if (!sheet || sheet.getLastRow() === 0) return cols.slice();
+  var width = sheet.getLastColumn();
+  if (width < 1) return cols.slice();
+  var header = sheet.getRange(1, 1, 1, width).getValues()[0];
+  var resolved = header.map(canonicalField);
+  // ถ้าหัวตารางว่างเปล่าจริงๆ ให้ถอยไปใช้ cols มาตรฐาน
+  var hasAny = resolved.some(function (h) { return h !== ""; });
+  return hasAny ? resolved : cols.slice();
 }
 
 function getOrCreateSheet(ss, name, header) {
@@ -91,21 +152,80 @@ function getOrCreateSheet(ss, name, header) {
   return sheet;
 }
 
+// บังคับให้ชีทมีหัวตารางมาตรฐานเสมอ — ถ้าเจอชีทเก่าที่หัวตารางเป็นภาษาไทย/ลำดับไม่ตรง/
+// ขาดคอลัมน์ จะย้ายข้อมูลเดิมไปไว้คอลัมน์ที่ถูกต้องให้อัตโนมัติ แล้วเขียนหัวตารางใหม่ทับ
+// (ข้อมูลเดิมไม่หาย และคอลัมน์แปลกที่ไม่รู้จักจะถูกเก็บต่อท้ายไว้ ไม่ถูกลบทิ้ง)
+// ทำงานทุกครั้งที่อ่าน/เขียน จึงแก้ตัวเองได้เลยโดยไม่ต้องแตะชีทด้วยมือ
+function ensureSchema(ss, sheetName, cols) {
+  var sheet = ss.getSheetByName(sheetName);
+  if (!sheet) {
+    sheet = ss.insertSheet(sheetName);
+    sheet.appendRow(cols);
+    return { sheet: sheet, cols: cols.slice(), migrated: true };
+  }
+  if (sheet.getLastRow() === 0) {
+    sheet.appendRow(cols);
+    return { sheet: sheet, cols: cols.slice(), migrated: true };
+  }
+
+  var width = sheet.getLastColumn();
+  var header = sheet.getRange(1, 1, 1, width).getValues()[0];
+  var resolved = header.map(canonicalField);
+
+  var isCanonical = resolved.length === cols.length && cols.every(function (c, i) { return resolved[i] === c; });
+  if (isCanonical) return { sheet: sheet, cols: cols.slice(), migrated: false };
+
+  // กันพลาด: ถ้าหัวตารางแปลกจนหาคอลัมน์ id ไม่เจอเลย อย่าเพิ่งเขียนทับ (กันข้อมูลเสียหาย)
+  if (resolved.indexOf("id") === -1) {
+    return { sheet: sheet, cols: resolved, migrated: false };
+  }
+
+  var lastRow = sheet.getLastRow();
+  var data = lastRow > 1 ? sheet.getRange(2, 1, lastRow - 1, width).getValues() : [];
+  var records = data.map(function (row) {
+    var obj = {};
+    resolved.forEach(function (c, i) { if (c) obj[c] = row[i]; });
+    if (!obj.timestamp && obj.date) obj.timestamp = obj.date;
+    return obj;
+  });
+
+  // คอลัมน์ที่ไม่อยู่ในมาตรฐาน ให้ต่อท้ายไว้ ไม่ทิ้งข้อมูลของผู้ใช้
+  var extra = [];
+  resolved.forEach(function (c) {
+    if (c && cols.indexOf(c) === -1 && extra.indexOf(c) === -1) extra.push(c);
+  });
+  var finalCols = cols.concat(extra);
+
+  sheet.clearContents();
+  sheet.getRange(1, 1, 1, finalCols.length).setValues([finalCols]);
+  if (records.length > 0) {
+    var rows = records.map(function (rec) {
+      return finalCols.map(function (c) { return rec[c] !== undefined ? rec[c] : ""; });
+    });
+    sheet.getRange(2, 1, rows.length, finalCols.length).setValues(rows);
+  }
+
+  return { sheet: sheet, cols: finalCols, migrated: true };
+}
+
 // เพิ่มแถวใหม่ หรืออัปเดตแถวเดิมถ้ามี id ซ้ำอยู่แล้ว (กันข้อมูลซ้ำเวลาซิงค์ซ้ำๆ)
 function upsertRecords(ss, sheetName, cols, records) {
   if (!records || records.length === 0) return jsonOut({ success: true, message: "ไม่มีข้อมูลให้บันทึก" });
-  var sheet = getOrCreateSheet(ss, sheetName, cols);
+  // จัดหัวตารางให้เป็นมาตรฐานก่อนเสมอ แล้วค่อยเขียน จึงไม่มีทางลงผิดคอลัมน์
+  var schema = ensureSchema(ss, sheetName, cols);
+  var sheet = schema.sheet;
+  var sheetCols = schema.cols;
   var lastRow = sheet.getLastRow();
   var existingIds = lastRow > 1 ? sheet.getRange(2, 1, lastRow - 1, 1).getValues().map(function (r) { return String(r[0]); }) : [];
 
   records.forEach(function (rec) {
-    var rowValues = cols.map(function (c) { return rec[c] !== undefined ? rec[c] : ""; });
+    var rowValues = sheetCols.map(function (c) { return rec[c] !== undefined ? rec[c] : ""; });
     var idx = existingIds.indexOf(String(rec.id));
     if (idx === -1) {
       sheet.appendRow(rowValues);
       existingIds.push(String(rec.id));
     } else {
-      sheet.getRange(idx + 2, 1, 1, cols.length).setValues([rowValues]);
+      sheet.getRange(idx + 2, 1, 1, sheetCols.length).setValues([rowValues]);
     }
   });
 
@@ -117,13 +237,18 @@ function getRecords(ss, sheetName, cols) {
 }
 
 function getRecordsRaw(ss, sheetName, cols) {
-  var sheet = ss.getSheetByName(sheetName);
-  if (!sheet || sheet.getLastRow() <= 1) return [];
+  if (!ss.getSheetByName(sheetName)) return [];
+  // อ่านก็จัดหัวตารางให้เป็นมาตรฐานก่อน ชีทเก่าจึงถูกซ่อมให้เองแม้ยังไม่มีการบันทึกใหม่
+  var schema = ensureSchema(ss, sheetName, cols);
+  var sheet = schema.sheet;
+  var sheetCols = schema.cols;
+  if (sheet.getLastRow() <= 1) return [];
 
-  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, cols.length).getValues();
+  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheetCols.length).getValues();
   return rows.map(function (row) {
     var obj = {};
-    cols.forEach(function (c, i) { obj[c] = row[i]; });
+    sheetCols.forEach(function (c, i) { if (c) obj[c] = row[i]; });
+    if (!obj.timestamp && obj.date) obj.timestamp = obj.date;
     return obj;
   });
 }

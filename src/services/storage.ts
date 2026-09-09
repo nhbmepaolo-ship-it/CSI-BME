@@ -769,11 +769,45 @@ export class StorageService {
   // actually reads). Records pulled straight off the sheet were silently missing their
   // category everywhere it's displayed (badges, category breakdown chart) because of this
   // — this reshapes a raw pulled row back into a proper ActivityRecord.
+  // Google Sheets can hand back a date as an ISO string, a Date serialized to JSON, or a
+  // locale-formatted string like "1/4/2569" (Thai Buddhist year) depending on how the cell
+  // was written/formatted. The dashboard filters and groups activities by `timestamp`
+  // using plain string prefixes ("2026-09"), so anything not in ISO form silently matched
+  // nothing and the totals came out as 0. This normalizes whatever came back into ISO.
+  private static toIsoTimestamp(value: any): string {
+    if (!value) return '';
+    const raw = String(value).trim();
+    if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw; // already ISO
+
+    // d/m/yyyy or d/m/yy, optionally followed by a time — also handles Buddhist years
+    const m = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+    if (m) {
+      const day = m[1].padStart(2, '0');
+      const month = m[2].padStart(2, '0');
+      let year = parseInt(m[3], 10);
+      if (year < 100) year += 2000;
+      if (year > 2500) year -= 543; // Buddhist Era -> Gregorian
+      return `${year}-${month}-${day}`;
+    }
+
+    const parsed = new Date(raw);
+    return isNaN(parsed.getTime()) ? '' : parsed.toISOString();
+  }
+
   private static normalizeRemoteActivity(r: any): ActivityRecord & { deleted?: boolean } {
+    const timestamp = this.toIsoTimestamp(r.timestamp) || this.toIsoTimestamp(r.date);
+    const num = (v: any) => {
+      const n = Number(v);
+      return isNaN(n) ? 0 : n;
+    };
     return {
       ...r,
+      timestamp,
       activityCategory: r.activityCategory || r.category || 'อื่นๆ',
-      dateKey: r.dateKey || (r.timestamp ? String(r.timestamp).substring(0, 10) : '')
+      hours: num(r.hours),
+      minutes: num(r.minutes),
+      totalMinutes: num(r.totalMinutes) || num(r.hours) * 60 + num(r.minutes),
+      dateKey: r.dateKey || timestamp.substring(0, 10)
     };
   }
 
