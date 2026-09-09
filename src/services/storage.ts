@@ -21,26 +21,39 @@ export class StorageService {
   // every device connected to the same GAS URL converges on the same data instead of
   // each browser's localStorage being an island.
   //
-  // Resolution order: (1) a URL explicitly saved in THIS browser's Settings, if any —
-  // lets someone override it locally if they ever need to; otherwise (2) the server-wide
-  // default from the GAS_WEB_APP_URL environment variable (see /api/gas-config), fetched
-  // once and cached for the rest of the session — this is what makes every device connect
-  // automatically without each one needing its own manual setup.
+  // Resolution order: the server-wide URL from the GAS_WEB_APP_URL environment variable
+  // (see /api/gas-config) WINS whenever it is set. A URL saved in this browser's own
+  // Settings is only used as a fallback when the server has none.
+  //
+  // The priority used to be the other way round, which caused a nasty failure: a browser
+  // that had once saved a wrong/outdated Web App URL kept using it forever, so the server
+  // could be perfectly configured (and /api/diagnose would report everything healthy)
+  // while that browser silently talked to the wrong Apps Script and showed no data at all.
+  // Making the server value authoritative means fixing the env var fixes every device.
   private static gasDefaultUrlCache: string | null = null;
 
   private static async getGasUrl(): Promise<string> {
-    const local = (localStorage.getItem('csi_google_sheets_url') || '').trim();
-    if (local) return local;
+    if (this.gasDefaultUrlCache === null) {
+      try {
+        const res = await fetch('/api/gas-config');
+        const data = await res.json().catch(() => ({}));
+        this.gasDefaultUrlCache = (data.gasUrl || '').trim();
+      } catch {
+        this.gasDefaultUrlCache = '';
+      }
 
-    if (this.gasDefaultUrlCache !== null) return this.gasDefaultUrlCache;
-    try {
-      const res = await fetch('/api/gas-config');
-      const data = await res.json().catch(() => ({}));
-      this.gasDefaultUrlCache = (data.gasUrl || '').trim();
-    } catch {
-      this.gasDefaultUrlCache = '';
+      // Keep the Settings field in sync with the URL actually in use, so what the person
+      // sees in the UI is the truth rather than a leftover value that is being ignored.
+      if (this.gasDefaultUrlCache) {
+        const saved = (localStorage.getItem('csi_google_sheets_url') || '').trim();
+        if (saved !== this.gasDefaultUrlCache) {
+          localStorage.setItem('csi_google_sheets_url', this.gasDefaultUrlCache);
+        }
+      }
     }
-    return this.gasDefaultUrlCache;
+
+    if (this.gasDefaultUrlCache) return this.gasDefaultUrlCache;
+    return (localStorage.getItem('csi_google_sheets_url') || '').trim();
   }
 
   private static async callGasAction(action: string, extra: Record<string, any> = {}): Promise<{ success: boolean; data?: any; message?: string }> {
