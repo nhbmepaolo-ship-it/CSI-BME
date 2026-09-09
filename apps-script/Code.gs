@@ -50,6 +50,32 @@ var COACHING_HEADER = [
 function doPost(e) { return handleRequest(e); }
 function doGet(e)  { return handleRequest(e); }
 
+/* ============================================================
+ *  ฟังก์ชันสำหรับกดรันตรงๆ ในหน้า Apps Script Editor
+ *  วิธีใช้: เลือกชื่อฟังก์ชันจากเมนูดรอปดาวน์ด้านบน แล้วกดปุ่ม "เรียกใช้" (Run)
+ *  ผลลัพธ์จะขึ้นในช่อง "บันทึกการดำเนินการ" (Execution log) ด้านล่าง
+ *
+ *  วิธีนี้ชัวร์กว่าการพิมพ์ ?action=... ท้าย URL เพราะไม่ต้องพึ่งพารามิเตอร์
+ *  ที่มักถูกตัดทิ้งระหว่าง redirect ของ Google
+ * ============================================================ */
+
+/** ตรวจสอบว่าข้อมูลในแต่ละแท็บตรงกันหรือไม่ (อ่านอย่างเดียว ไม่แก้ไขข้อมูล) */
+function RUN_ตรวจสอบข้อมูล() {
+  var result = JSON.parse(handleRequest({ parameter: { action: "audit" } }).getContent
+    ? handleRequest({ parameter: { action: "audit" } }).getContent()
+    : handleRequest({ parameter: { action: "audit" } }));
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+/** ซ่อม ID ที่ซ้ำกันในแท็บกิจกรรม (แก้ไขข้อมูลจริง — รันครั้งเดียวพอ) */
+function RUN_ซ่อมIDซ้ำ() {
+  var out = handleRequest({ parameter: { action: "fix_duplicate_ids" } });
+  var result = JSON.parse(out.getContent ? out.getContent() : out);
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
 function json(obj) {
   return ContentService
     .createTextOutput(JSON.stringify(obj))
@@ -308,11 +334,11 @@ function handleRequest(e) {
       data = { action: e.parameter.action };
     }
 
+    // เปิด URL เปล่าๆ ในเบราว์เซอร์ = แสดงรายงานตรวจสอบ (audit) ให้เลย
+    // ทำแบบนี้เพราะพารามิเตอร์ท้าย URL มักถูกตัดทิ้งระหว่าง redirect ของ Google
+    // audit เป็นคำสั่งอ่านอย่างเดียว ไม่แก้ไขข้อมูลใดๆ จึงปลอดภัยที่จะเป็นค่าเริ่มต้น
     if (!data) {
-      return json({
-        success: false,
-        message: "ไม่มีข้อมูลส่งมา — ลองเรียกแบบ ...exec?action=audit หรือ ?action=fix_duplicate_ids"
-      });
+      data = { action: "audit" };
     }
 
     var action = data.action || "";
@@ -364,6 +390,9 @@ function handleRequest(e) {
 
       return json({
         success: true,
+        nextStep: dupList.length > 0
+          ? "พบ ID ซ้ำ — เปิด Apps Script Editor เลือกฟังก์ชัน RUN_ซ่อมIDซ้ำ จากดรอปดาวน์ แล้วกดเรียกใช้ (Run)"
+          : "ข้อมูลตรงกันดีแล้ว ไม่ต้องซ่อมอะไร",
         data: {
           activities: {
             rowsInSheet: actRows,
