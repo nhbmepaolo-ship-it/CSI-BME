@@ -742,7 +742,12 @@ export class StorageService {
 
     const newRecord: ActivityRecord = {
       ...record,
-      id: 'act-' + Date.now(),
+      // 'act-' + Date.now() alone is NOT unique: anything that creates several records
+      // inside the same millisecond (bulk entry, a loop, rapid repeated submits) hands
+      // them all the SAME id. Because every device — and the Apps Script upsert — treats
+      // id as the primary key, those rows collapse into one record when read back, which
+      // is why a sheet with 35 rows was only showing 7 activities in the dashboard.
+      id: 'act-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
       timestamp: now.toISOString(),
       hours,
       minutes,

@@ -301,7 +301,19 @@ function handleRequest(e) {
       try { data = JSON.parse(e.parameter.data); } catch (err) {}
     }
 
-    if (!data) return json({ success: false, message: "ไม่มีข้อมูลส่งมา" });
+    // รองรับการเรียกแบบพิมพ์ URL ตรงๆ เช่น ...exec?action=audit
+    // (เดิมต้องส่ง ?data={"action":"audit"} ซึ่งวงเล็บปีกกาและอัญประกาศมักถูกตัดทิ้ง
+    //  ระหว่าง redirect ของ Google ทำให้สคริปต์ได้รับค่าว่างและตอบว่า "ไม่มีข้อมูลส่งมา")
+    if (!data && e && e.parameter && e.parameter.action) {
+      data = { action: e.parameter.action };
+    }
+
+    if (!data) {
+      return json({
+        success: false,
+        message: "ไม่มีข้อมูลส่งมา — ลองเรียกแบบ ...exec?action=audit หรือ ?action=fix_duplicate_ids"
+      });
+    }
 
     var action = data.action || "";
 
@@ -330,6 +342,86 @@ function handleRequest(e) {
         }
       });
     }
+    /**
+     * ตรวจสอบความตรงกันของทุกแท็บ
+     * เทียบ "จำนวนแถวในชีท" กับ "จำนวนรายการที่ระบบจะเห็นจริง"
+     * ถ้าไม่เท่ากัน แปลว่ามี ID ซ้ำ ระบบจะยุบรวมเป็นรายการเดียว ทำให้ข้อมูลหาย
+     */
+    if (action === "audit") {
+      var shAu = ss.getSheetByName(TAB_ACTIVITY) || ss.getSheetByName("ชีต8");
+      var actRows = (shAu && shAu.getLastRow() > 1) ? shAu.getLastRow() - 1 : 0;
+      var acts = readActivities(ss);
+      var seen = {}, dupIds = {};
+      acts.forEach(function (a) {
+        if (seen[a.id]) dupIds[a.id] = (dupIds[a.id] || 1) + 1;
+        seen[a.id] = true;
+      });
+      var dupList = [];
+      for (var d in dupIds) { if (dupIds.hasOwnProperty(d)) dupList.push({ id: d, count: dupIds[d] }); }
+
+      var shVo = ss.getSheetByName(TAB_VOTES);
+      var shCo = ss.getSheetByName(TAB_COACHING);
+
+      return json({
+        success: true,
+        data: {
+          activities: {
+            rowsInSheet: actRows,
+            uniqueRecords: Object.keys(seen).length,
+            duplicateIds: dupList,
+            note: dupList.length > 0
+              ? "พบ ID ซ้ำ ระบบจะเห็นแค่ " + Object.keys(seen).length + " รายการจาก " + actRows + " แถว — เรียก action fix_duplicate_ids เพื่อซ่อม"
+              : "ตรงกันดี"
+          },
+          votes: {
+            rowsInSheet: (shVo && shVo.getLastRow() > 1) ? shVo.getLastRow() - 1 : 0,
+            uniqueRecords: readVotes(ss).length
+          },
+          coaching: {
+            rowsInSheet: (shCo && shCo.getLastRow() > 1) ? shCo.getLastRow() - 1 : 0,
+            uniqueRecords: readCoaching(ss).length,
+            note: "แท็บนี้บันทึกแบบต่อท้าย ระบบยึดแถวล่าสุดของแต่ละรหัสพนักงาน จำนวนจึงน้อยกว่าแถวได้เป็นปกติ"
+          }
+        }
+      });
+    }
+
+    /**
+     * ซ่อม ID ซ้ำในแท็บกิจกรรม
+     * แถวแรกของแต่ละ ID เก็บไว้เหมือนเดิม แถวที่ซ้ำจะได้ ID ใหม่ที่ไม่ซ้ำใคร
+     * ทำให้ทุกแถวในชีทถูกนับเป็นรายการแยกกันอย่างถูกต้อง (ไม่มีข้อมูลหาย)
+     */
+    if (action === "fix_duplicate_ids") {
+      var shFix = ss.getSheetByName(TAB_ACTIVITY) || ss.getSheetByName("ชีต8");
+      if (!shFix || shFix.getLastRow() < 2) {
+        return json({ success: true, message: "ไม่มีข้อมูลให้ซ่อม", data: { fixed: 0 } });
+      }
+      var lastR = shFix.getLastRow();
+      var idRange = shFix.getRange(2, 1, lastR - 1, 1);
+      var idVals = idRange.getValues();
+      var used = {}, fixed = 0;
+
+      for (var i = 0; i < idVals.length; i++) {
+        var cur = String(idVals[i][0] || "").trim();
+        if (!cur || used[cur]) {
+          var fresh = "act-" + new Date().getTime() + "-" + i + "-" +
+                      Math.random().toString(36).substring(2, 8);
+          idVals[i][0] = fresh;
+          used[fresh] = true;
+          fixed++;
+        } else {
+          used[cur] = true;
+        }
+      }
+
+      idRange.setValues(idVals);
+      return json({
+        success: true,
+        message: "ซ่อม ID ซ้ำเรียบร้อย " + fixed + " แถว — ตอนนี้ทั้งหมด " + idVals.length + " แถวจะแสดงครบในระบบ",
+        data: { fixed: fixed, totalRows: idVals.length }
+      });
+    }
+
     if (action === "setup_sheets") {
       getActivityTab(ss);
       getTab(ss, TAB_VOTES, VOTE_HEADER);
