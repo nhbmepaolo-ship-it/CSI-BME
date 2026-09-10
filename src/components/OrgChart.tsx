@@ -2,6 +2,109 @@ import React, { useState, useEffect, useRef } from 'react';
 import { OrgNode, OrgChartConfig, Employee, OrgBadgeLevel } from '../types';
 import { StorageService } from '../services/storage';
 import html2canvas from 'html2canvas';
+
+/**
+ * html2canvas (1.4.x) has its own CSS colour parser that predates CSS Color 4, so it
+ * throws `Attempting to parse an unsupported color function "oklch"` the moment it meets
+ * one. Tailwind v4 emits every default palette colour as oklch(), which means PDF export,
+ * PNG export and printing all fail on this app.
+ *
+ * Fix: before html2canvas reads the DOM, walk the CLONED document it is about to render
+ * and rewrite every colour-bearing property that still contains oklch() into plain rgb().
+ * Only the throwaway clone is touched — what the user sees on screen is untouched.
+ */
+const OKLCH_PROPS = [
+  'color',
+  'backgroundColor',
+  'borderTopColor',
+  'borderRightColor',
+  'borderBottomColor',
+  'borderLeftColor',
+  'outlineColor',
+  'textDecorationColor',
+  'fill',
+  'stroke'
+] as const;
+
+/** Convert one oklch(...) colour string to rgb()/rgba(). Returns null if not oklch. */
+function oklchToRgb(value: string): string | null {
+  const match = value.match(/oklch\(\s*([^)]+)\)/i);
+  if (!match) return null;
+
+  const parts = match[1].split('/');
+  const alpha = parts[1] !== undefined ? parseFloat(parts[1]) : 1;
+  const nums = parts[0].trim().split(/\s+/);
+
+  const L = nums[0].endsWith('%') ? parseFloat(nums[0]) / 100 : parseFloat(nums[0]);
+  const C = parseFloat(nums[1]) || 0;
+  const hDeg = parseFloat(nums[2]) || 0;
+
+  if (isNaN(L)) return null;
+
+  // OKLCH -> OKLab
+  const h = (hDeg * Math.PI) / 180;
+  const a = C * Math.cos(h);
+  const b = C * Math.sin(h);
+
+  // OKLab -> linear sRGB (Björn Ottosson's matrices)
+  const l_ = L + 0.3963377774 * a + 0.2158037573 * b;
+  const m_ = L - 0.1055613458 * a - 0.0638541728 * b;
+  const s_ = L - 0.0894841775 * a - 1.291485548 * b;
+
+  const l = l_ * l_ * l_;
+  const m = m_ * m_ * m_;
+  const s = s_ * s_ * s_;
+
+  const lr = 4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s;
+  const lg = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s;
+  const lb = -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s;
+
+  // linear -> gamma-encoded sRGB, clamped to the displayable range
+  const encode = (c: number) => {
+    const v = c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
+    return Math.max(0, Math.min(255, Math.round(v * 255)));
+  };
+
+  const r = encode(lr);
+  const g = encode(lg);
+  const bl = encode(lb);
+
+  return alpha >= 1 ? `rgb(${r}, ${g}, ${bl})` : `rgba(${r}, ${g}, ${bl}, ${alpha})`;
+}
+
+/** Rewrite every oklch() colour in a cloned document into rgb() so html2canvas can parse it. */
+function sanitizeOklchColors(root: HTMLElement | Document): void {
+  const doc = (root as Document).body ? (root as Document) : (root as HTMLElement).ownerDocument;
+  if (!doc) return;
+
+  const elements = doc.querySelectorAll<HTMLElement>('*');
+  elements.forEach(el => {
+    let computed: CSSStyleDeclaration;
+    try {
+      computed = (doc.defaultView || window).getComputedStyle(el);
+    } catch {
+      return;
+    }
+
+    OKLCH_PROPS.forEach(prop => {
+      const current = computed[prop as any] as string;
+      if (typeof current === 'string' && current.includes('oklch')) {
+        const converted = oklchToRgb(current);
+        if (converted) (el.style as any)[prop] = converted;
+      }
+    });
+
+    // Gradients and shadows can carry oklch too, and are not covered by the list above.
+    const bgImage = computed.backgroundImage;
+    if (bgImage && bgImage.includes('oklch')) {
+      el.style.backgroundImage = bgImage.replace(/oklch\([^)]+\)/gi, m => oklchToRgb(m) || 'rgb(0, 0, 0)');
+    }
+    const shadow = computed.boxShadow;
+    if (shadow && shadow.includes('oklch')) {
+      el.style.boxShadow = shadow.replace(/oklch\([^)]+\)/gi, m => oklchToRgb(m) || 'rgb(0, 0, 0)');
+    }
+  });
+}
 import { jsPDF } from 'jspdf';
 
 interface OrgChartProps {
@@ -268,7 +371,9 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
         useCORS: true,
         allowTaint: false,
         backgroundColor: '#0f172a',
-        logging: false
+        logging: false,
+        // Strip oklch() colours from the clone before rendering (see sanitizeOklchColors)
+        onclone: (clonedDoc: Document) => sanitizeOklchColors(clonedDoc)
       });
 
       const imgData = canvas.toDataURL('image/png');
@@ -331,7 +436,9 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
         useCORS: true,
         allowTaint: false,
         backgroundColor: '#0f172a',
-        logging: false
+        logging: false,
+        // Strip oklch() colours from the clone before rendering (see sanitizeOklchColors)
+        onclone: (clonedDoc: Document) => sanitizeOklchColors(clonedDoc)
       });
 
       const imgData = canvas.toDataURL('image/png');
@@ -404,7 +511,8 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
         scale: 2,
         useCORS: true,
         allowTaint: false,
-        backgroundColor: '#0f172a'
+        backgroundColor: '#0f172a',
+        onclone: (clonedDoc: Document) => sanitizeOklchColors(clonedDoc)
       });
 
       const link = document.createElement('a');

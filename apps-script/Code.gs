@@ -55,6 +55,392 @@ var COACHING_HEADER = [
   "ชั่วโมงรวม", "ความก้าวหน้า (%)"
 ];
 
+/* ============================================================
+ *  ส่งการ์ดสรุปรายสัปดาห์เข้า LINE และ Telegram อัตโนมัติ
+ *  ------------------------------------------------------------
+ *  ทำงานในตัว Apps Script เอง ไม่ต้องพึ่ง Vercel Cron (แพลน Hobby
+ *  ตั้ง cron รายสัปดาห์ไม่ได้) และไม่ต้องตั้ง Environment Variables
+ *
+ *  วิธีติดตั้ง (ทำครั้งเดียว)
+ *   1. ใส่ Token/ID: เลือกฟังก์ชัน RUN_ตั้งค่าการแจ้งเตือน แล้วแก้ค่าใน
+ *      ฟังก์ชันนั้นให้เป็นของคุณก่อนกดเรียกใช้ (เก็บใน Script Properties
+ *      ไม่ได้ฝังไว้ในโค้ด จึงไม่หลุดไปกับไฟล์ที่แชร์)
+ *   2. ทดสอบ: เลือกฟังก์ชัน RUN_ทดสอบส่งการ์ด แล้วกดเรียกใช้
+ *   3. ตั้งเวลา: เมนูซ้าย "ทริกเกอร์ (Triggers)" > เพิ่มทริกเกอร์
+ *      - ฟังก์ชัน: sendWeeklyCard
+ *      - ประเภท: ตามเวลา (Time-driven) > ตัวจับเวลารายสัปดาห์ (Week timer)
+ *      - วัน: วันพฤหัสบดี   เวลา: 10:00-11:00 น.
+ *      (Apps Script เลือกเวลาได้เป็นช่วง 1 ชั่วโมง ไม่สามารถระบุ 10:30 เป๊ะได้)
+ * ============================================================ */
+
+/** ใส่ค่า Token/ID ของคุณตรงนี้ แล้วกดเรียกใช้ฟังก์ชันนี้ครั้งเดียว */
+function RUN_ตั้งค่าการแจ้งเตือน() {
+  var props = PropertiesService.getScriptProperties();
+  props.setProperties({
+    LINE_CHANNEL_TOKEN: "",   // Channel access token ของ LINE OA ของคุณ
+    LINE_GROUP_ID:      "",   // Group ID ของกลุ่ม LINE ที่จะให้แจ้งเตือน
+    LINE_USER_ID:       "",   // (ไม่บังคับ) ส่งเข้าแชทส่วนตัวด้วย
+    TELEGRAM_BOT_TOKEN: "",   // Bot Token จาก @BotFather
+    TELEGRAM_CHAT_ID:   ""    // Chat ID ของกลุ่ม/แชท Telegram
+  }, false);
+  Logger.log("บันทึกการตั้งค่าเรียบร้อย — ลองเรียก RUN_ทดสอบส่งการ์ด ต่อได้เลย");
+}
+
+/** ทดสอบส่งทันที (ใช้ข้อมูลจริง) */
+function RUN_ทดสอบส่งการ์ด() {
+  var result = sendWeeklyCard();
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+/** ดูข้อความที่จะส่ง โดยไม่ส่งจริง */
+function RUN_ดูข้อความก่อนส่ง() {
+  Logger.log(buildWeeklyCardText());
+}
+
+/**
+ * ดู JSON ของการ์ด Flex โดยไม่ส่งจริง
+ * คัดลอกผลไปวางดูตัวอย่างได้ที่ https://developers.line.biz/flex-simulator/
+ */
+function RUN_ดูการ์ดFlex() {
+  Logger.log(JSON.stringify(buildWeeklyFlex(), null, 2));
+}
+
+function prop_(name) {
+  return (PropertiesService.getScriptProperties().getProperty(name) || "").trim();
+}
+
+/** วันที่ปัจจุบันตามเวลาไทย */
+function bkkNow_() {
+  return new Date(Utilities.formatDate(new Date(), "Asia/Bangkok", "yyyy/MM/dd HH:mm:ss"));
+}
+
+/** ข้อความกระชับสำหรับ Telegram และใช้เป็น fallback ของ Flex (รองรับ HTML ตัวหนา) */
+function buildWeeklyCardText() {
+  var d = collectWeeklyData_();
+
+  var t = "📢 <b>สรุป CSI &amp; กิจกรรม BME PTP</b>\n";
+  t += "📅 " + d.dateLabel + "   🗓 " + d.monthLabel + "\n";
+  t += "━━━━━━━━━━━━\n";
+
+  t += "\n💖 <b>ผลประเมิน CSI</b>\n";
+  t += "🏥 แผนก " + d.deptCount + "/20   " + (d.deptCount >= 20 ? "✅ ครบแล้ว" : "⏳ ยังไม่ครบ") + "\n";
+
+  if (d.top3.length) {
+    t += "\n🌟 <b>พนักงานดีเด่น</b>\n";
+    var medals = ["🥇", "🥈", "🥉"];
+    d.top3.forEach(function (s, i) {
+      t += medals[i] + " " + shortName_(s.name, "") + "  " + s.count + "× ⭐" + s.avg + "\n";
+    });
+  }
+
+  t += "\n🏃 <b>ชั่วโมงกิจกรรม</b>\n";
+  if (d.topHours.length) {
+    d.topHours.slice(0, 8).forEach(function (e, i) {
+      var h = Math.floor(e.mins / 60), m = e.mins % 60;
+      t += (i + 1) + ". " + shortName_(e.name, e.nick) + "  ⏱ " + h + ":" + (m < 10 ? "0" + m : m) + "\n";
+    });
+  } else {
+    t += "— ยังไม่มีข้อมูลเดือนนี้\n";
+  }
+
+  t += "\n━━━━━━━━━━━━\n🤖 ส่งอัตโนมัติ · CSI BME PTP";
+  return t;
+}
+
+/** เวอร์ชันไม่มีแท็ก HTML ใช้ตอนส่งเข้า LINE (LINE ไม่รองรับ HTML) */
+function buildWeeklyCardPlainText() {
+  return buildWeeklyCardText().replace(/<\/?b>/g, "").replace(/&amp;/g, "&");
+}
+
+/**
+ * ย่อชื่อให้สั้นที่สุดเพื่อไม่ให้ข้อความล้นขึ้นบรรทัดใหม่
+ * ลำดับการเลือก: ชื่อเล่นที่มีอยู่แล้ว > ชื่อเล่นในวงเล็บ "Somchai (เป๊ก)" > ชื่อต้นภาษาอังกฤษ
+ */
+function shortName_(fullName, nickname) {
+  var nick = String(nickname || "").trim();
+  if (nick) return nick;
+
+  var full = String(fullName || "").trim();
+  if (!full) return "-";
+
+  var inParen = full.match(/\(([^)]+)\)/);
+  if (inParen && inParen[1].trim()) return inParen[1].trim();
+
+  // ตัดวงเล็บทิ้งแล้วเอาคำแรก (ชื่อต้น) — ภาษาไทยส่วนใหญ่สั้นอยู่แล้ว
+  return full.replace(/\([^)]*\)/g, "").trim().split(/\s+/)[0] || full;
+}
+
+function txt_(text, opts) {
+  var o = { type: "text", text: String(text), wrap: true, size: "sm" };
+  for (var k in (opts || {})) o[k] = opts[k];
+  return o;
+}
+
+/** การ์ด Flex สำหรับ LINE — เน้นกระชับ ตัวอักษรเล็ก ใช้ชื่อเล่น/อิโมจิ ไม่ให้ตกบรรทัด */
+function buildWeeklyFlex() {
+  var d = collectWeeklyData_();
+  var achieved = d.deptCount >= 20;
+
+  var body = [];
+
+  // --- CSI ---
+  body.push(txt_("💖 ผลประเมิน CSI", { weight: "bold", size: "sm", color: "#00695C", wrap: false }));
+  body.push({
+    type: "box", layout: "vertical", margin: "sm", spacing: "xs",
+    backgroundColor: "#F1F8E9", cornerRadius: "md", paddingAll: "sm",
+    contents: [
+      {
+        type: "box", layout: "horizontal", contents: [
+          txt_("🏥 แผนก", { size: "xxs", color: "#666666", flex: 3, wrap: false }),
+          txt_(d.deptCount + "/20", { size: "xxs", weight: "bold", align: "end", flex: 2, color: "#2E7D32", wrap: false })
+        ]
+      },
+      {
+        type: "box", layout: "horizontal", contents: [
+          txt_("🎯 เป้าหมาย", { size: "xxs", color: "#666666", flex: 3, wrap: false }),
+          txt_(achieved ? "✅ ครบแล้ว" : "⏳ ยังไม่ครบ",
+               { size: "xxs", weight: "bold", align: "end", flex: 2, color: achieved ? "#2E7D32" : "#EF6C00", wrap: false })
+        ]
+      }
+    ]
+  });
+
+  if (d.top3.length) {
+    body.push(txt_("🌟 พนักงานดีเด่น", { weight: "bold", size: "xs", margin: "md", color: "#00695C", wrap: false }));
+    var medals = ["🥇", "🥈", "🥉"];
+    d.top3.forEach(function (s, i) {
+      body.push({
+        type: "box", layout: "horizontal", margin: "xs", contents: [
+          txt_(medals[i] + " " + shortName_(s.name, ""), { size: "xxs", flex: 4, color: "#333333", wrap: false }),
+          txt_(s.count + "× ⭐" + s.avg, { size: "xxs", align: "end", flex: 3, color: "#00897B", weight: "bold", wrap: false })
+        ]
+      });
+    });
+  }
+
+  body.push({ type: "separator", margin: "lg" });
+
+  // --- กิจกรรม ---
+  body.push(txt_("🏃 ชั่วโมงกิจกรรม", { weight: "bold", size: "sm", margin: "md", color: "#00695C", wrap: false }));
+
+  if (d.topHours.length) {
+    d.topHours.slice(0, 8).forEach(function (e, i) {
+      var h = Math.floor(e.mins / 60), m = e.mins % 60;
+      body.push({
+        type: "box", layout: "horizontal", margin: "xs", contents: [
+          txt_((i + 1) + ". " + shortName_(e.name, e.nick), { size: "xxs", flex: 4, color: "#333333", wrap: false }),
+          txt_("⏱ " + h + ":" + (m < 10 ? "0" + m : m), { size: "xxs", align: "end", flex: 3, color: "#00897B", weight: "bold", wrap: false })
+        ]
+      });
+    });
+  } else {
+    body.push(txt_("— ยังไม่มีข้อมูลเดือนนี้", { size: "xxs", color: "#888888", margin: "sm", wrap: false }));
+  }
+
+  return {
+    type: "bubble",
+    size: "mega",
+    header: {
+      type: "box", layout: "vertical", backgroundColor: "#00897B", paddingAll: "md",
+      contents: [
+        txt_("📢 สรุป CSI & กิจกรรม BME PTP", { weight: "bold", color: "#FFFFFF", size: "sm", wrap: false }),
+        txt_("📅 " + d.dateLabel + "   🗓 " + d.monthLabel, { color: "#E0F2F1", size: "xxs", margin: "xs", wrap: false })
+      ]
+    },
+    body: { type: "box", layout: "vertical", paddingAll: "md", spacing: "none", contents: body },
+    footer: {
+      type: "box", layout: "vertical", paddingAll: "sm", backgroundColor: "#FAFAFA",
+      contents: [txt_("ส่งอัตโนมัติ · CSI BME PTP", { size: "xxs", color: "#999999", align: "center", wrap: false })]
+    }
+  };
+}
+
+/** รวบรวมตัวเลขสรุปของเดือนปัจจุบัน ใช้ร่วมกันทั้งข้อความธรรมดาและการ์ด Flex */
+function collectWeeklyData_() {
+  var now = bkkNow_();
+  var monthKey = Utilities.formatDate(now, "Asia/Bangkok", "yyyy-MM");
+  var thaiMonths = ["", "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
+                    "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"];
+  var monthLabel = thaiMonths[now.getMonth() + 1] + " " + now.getFullYear();
+
+  /* ---------- ส่วนที่ 1: ผลประเมิน CSI ---------- */
+  var deptSet = {}, deptCount = 0;
+  var staffMap = {};
+
+  try {
+    var csiSs = SpreadsheetApp.openById(CSI_SPREADSHEET_ID);
+    var csiSheet = csiSs.getSheetByName(TAB_CSI);
+    if (csiSheet && csiSheet.getLastRow() > 1) {
+      var width = Math.min(csiSheet.getLastColumn(), 25);
+      var csiRows = csiSheet.getRange(2, 1, csiSheet.getLastRow() - 1, width).getValues();
+
+      csiRows.forEach(function (r) {
+        var iso = toIso(r[0]);
+        if (!iso || iso.substring(0, 7) !== monthKey) return;
+
+        var dept = String(r[3] || "").trim();
+        if (dept && !deptSet[dept]) { deptSet[dept] = true; deptCount++; }
+
+        // คะแนนอยู่คอลัมน์ 1.1-1.7 (index 7-13) และ 2.1-2.5 (index 15-19)
+        var scores = [], idxs = [7, 8, 9, 10, 11, 12, 13, 15, 16, 17, 18, 19];
+        idxs.forEach(function (i) {
+          var n = parseInt(r[i], 10);
+          if (!isNaN(n) && n >= 1 && n <= 5) scores.push(n);
+        });
+        var avg = scores.length ? scores.reduce(function (a, b) { return a + b; }, 0) / scores.length : 0;
+
+        // นับทั้งพนักงานที่ถูกประเมิน และคนที่ถูกระบุว่า "ประทับใจ"
+        var names = {};
+        [String(r[4] || "").trim(), String(r[20] || "").trim()].forEach(function (n) {
+          if (n && n !== "-" && n !== "ไม่ระบุ") names[n] = true;
+        });
+        Object.keys(names).forEach(function (n) {
+          if (!staffMap[n]) staffMap[n] = { count: 0, total: 0 };
+          staffMap[n].count++;
+          staffMap[n].total += avg;
+        });
+      });
+    }
+  } catch (e) {
+    Logger.log("อ่านข้อมูล CSI ไม่ได้: " + e);
+  }
+
+  var top3 = Object.keys(staffMap).map(function (n) {
+    return { name: n, count: staffMap[n].count, avg: (staffMap[n].total / staffMap[n].count).toFixed(1) };
+  }).sort(function (a, b) {
+    return b.count - a.count || parseFloat(b.avg) - parseFloat(a.avg);
+  }).slice(0, 3);
+
+  /* ---------- ส่วนที่ 2: ชั่วโมงกิจกรรม ---------- */
+  var hoursMap = {};
+  try {
+    readActivities(SpreadsheetApp.getActiveSpreadsheet()).forEach(function (a) {
+      if (!a.timestamp || a.timestamp.substring(0, 7) !== monthKey) return;
+      var key = a.fullName + "|" + a.nickname;
+      if (!hoursMap[key]) hoursMap[key] = { name: a.fullName, nick: a.nickname, mins: 0 };
+      hoursMap[key].mins += Number(a.totalMinutes) || 0;
+    });
+  } catch (e) {
+    Logger.log("อ่านข้อมูลกิจกรรมไม่ได้: " + e);
+  }
+
+  var topHours = Object.keys(hoursMap).map(function (k) { return hoursMap[k]; })
+    .sort(function (a, b) { return b.mins - a.mins; }).slice(0, 10);
+
+  /* ---------- คืนค่าเป็นข้อมูลดิบ ให้ตัวสร้างข้อความ/การ์ด Flex ไปใช้ต่อ ---------- */
+  return {
+    dateLabel: Utilities.formatDate(now, "Asia/Bangkok", "dd/MM/yyyy"),
+    monthLabel: monthLabel,
+    deptCount: deptCount,
+    top3: top3,
+    topHours: topHours
+  };
+}
+
+/** ฟังก์ชันหลักที่ทริกเกอร์เรียก — ส่งการ์ด Flex เข้า LINE และข้อความเข้า Telegram */
+function sendWeeklyCard() {
+  var text = buildWeeklyCardPlainText();   // LINE: ไม่มีแท็ก HTML
+  var tgText = buildWeeklyCardText();      // Telegram: มี <b> ตัวหนา
+  var out = { line: "", telegram: "" };
+
+  // ----- LINE (การ์ด Flex) -----
+  var lineToken = prop_("LINE_CHANNEL_TOKEN");
+  var targets = [prop_("LINE_GROUP_ID"), prop_("LINE_USER_ID")].filter(String);
+
+  if (lineToken && targets.length) {
+    var flex = null;
+    try {
+      flex = buildWeeklyFlex();
+    } catch (eFlex) {
+      Logger.log("สร้างการ์ด Flex ไม่สำเร็จ จะส่งเป็นข้อความธรรมดาแทน: " + eFlex);
+    }
+
+    var msgs = [];
+    targets.forEach(function (to) {
+      // ลองส่งเป็นการ์ด Flex ก่อน ถ้า LINE ปฏิเสธ (โครงสร้างผิด/ยาวเกิน)
+      // ค่อยถอยไปส่งข้อความธรรมดา เพื่อให้ยังได้รับรายงานอยู่ดี
+      var sent = false;
+
+      if (flex) {
+        try {
+          var resFlex = UrlFetchApp.fetch("https://api.line.me/v2/bot/message/push", {
+            method: "post",
+            contentType: "application/json",
+            headers: { Authorization: "Bearer " + lineToken },
+            payload: JSON.stringify({
+              to: to,
+              messages: [{
+                type: "flex",
+                altText: "รายงานสรุป CSI & กิจกรรม BME PTP",
+                contents: flex
+              }]
+            }),
+            muteHttpExceptions: true
+          });
+          if (resFlex.getResponseCode() === 200) {
+            msgs.push(to + ": สำเร็จ (การ์ด Flex)");
+            sent = true;
+          } else {
+            Logger.log("Flex ถูกปฏิเสธ: " + resFlex.getContentText().substring(0, 300));
+          }
+        } catch (e1) {
+          Logger.log("ส่ง Flex ผิดพลาด: " + e1);
+        }
+      }
+
+      if (!sent) {
+        try {
+          var res = UrlFetchApp.fetch("https://api.line.me/v2/bot/message/push", {
+            method: "post",
+            contentType: "application/json",
+            headers: { Authorization: "Bearer " + lineToken },
+            payload: JSON.stringify({ to: to, messages: [{ type: "text", text: text }] }),
+            muteHttpExceptions: true
+          });
+          msgs.push(res.getResponseCode() === 200
+            ? to + ": สำเร็จ (ข้อความธรรมดา)"
+            : to + ": " + res.getContentText().substring(0, 150));
+        } catch (e) {
+          msgs.push(to + ": " + e);
+        }
+      }
+    });
+    out.line = msgs.join(" | ");
+  } else {
+    out.line = "ยังไม่ได้ตั้งค่า LINE_CHANNEL_TOKEN / LINE_GROUP_ID (ดูที่ การตั้งค่าโปรเจกต์ > พร็อพเพอร์ตี้ของสคริปต์)";
+  }
+
+  // ----- Telegram -----
+  var botToken = prop_("TELEGRAM_BOT_TOKEN");
+  var chatId = prop_("TELEGRAM_CHAT_ID");
+
+  if (botToken && chatId) {
+    try {
+      var tg = UrlFetchApp.fetch("https://api.telegram.org/bot" + botToken + "/sendMessage", {
+        method: "post",
+        contentType: "application/json",
+        payload: JSON.stringify({
+          chat_id: chatId,
+          text: tgText,
+          parse_mode: "HTML",
+          disable_web_page_preview: true
+        }),
+        muteHttpExceptions: true
+      });
+      var body = JSON.parse(tg.getContentText());
+      out.telegram = body.ok ? "สำเร็จ" : (body.description || "ส่งไม่สำเร็จ");
+    } catch (e) {
+      out.telegram = String(e);
+    }
+  } else {
+    out.telegram = "ยังไม่ได้ตั้งค่า TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID";
+  }
+
+  Logger.log("LINE: " + out.line + "\nTelegram: " + out.telegram);
+  return out;
+}
+
 function doPost(e) { return handleRequest(e); }
 function doGet(e)  { return handleRequest(e); }
 
