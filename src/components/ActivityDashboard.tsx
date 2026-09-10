@@ -9,6 +9,7 @@ import {
   PieChart,
   Pie,
   Cell,
+  LabelList,
   Legend,
   AreaChart,
   Area,
@@ -467,6 +468,32 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
       }));
   }, [employeeStats]);
 
+  // Chart Data 4: ชั่วโมงแยกตาม "ชื่อกิจกรรม" — ตอบคำถามว่าชั่วโมงที่สะสมมาจากกิจกรรมอะไรบ้าง
+  const activityNameChartData = useMemo(() => {
+    const map: { [name: string]: { minutes: number; count: number; category: string } } = {};
+    filteredActivities.forEach(a => {
+      const key = (a.activityName || 'ไม่ระบุ').trim() || 'ไม่ระบุ';
+      if (!map[key]) map[key] = { minutes: 0, count: 0, category: a.activityCategory };
+      map[key].minutes += a.totalMinutes;
+      map[key].count += 1;
+    });
+
+    const colors = ['#10b981', '#06b6d4', '#8b5cf6', '#f59e0b', '#ec4899', '#3b82f6', '#14b8a6', '#f97316'];
+    return Object.entries(map)
+      .filter(([_, v]) => v.minutes > 0)
+      .sort((a, b) => b[1].minutes - a[1].minutes)
+      .slice(0, 8)
+      .map(([name, v], idx) => ({
+        name: name.length > 22 ? name.slice(0, 21) + '…' : name,
+        fullName: name,
+        hours: Number((v.minutes / 60).toFixed(1)),
+        minutes: v.minutes,
+        count: v.count,
+        category: v.category,
+        color: colors[idx % colors.length]
+      }));
+  }, [filteredActivities]);
+
   // Chart Data 2: Hours Breakdown by Club
   const clubChartData = useMemo(() => {
     const map: { [club: string]: number } = {};
@@ -849,7 +876,7 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
             {topEmployeeChartData.length > 0 ? (
               <div className="h-64 w-full pt-2">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={topEmployeeChartData} margin={{ top: 10, right: 10, left: -20, bottom: 25 }}>
+                  <BarChart data={topEmployeeChartData} margin={{ top: 24, right: 10, left: -20, bottom: 25 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#ffffff15" vertical={false} />
                     <XAxis
                       dataKey="name"
@@ -858,9 +885,13 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
                       tickLine={false}
                       angle={-25}
                       textAnchor="end"
+                      // ต้องกำหนด fill ให้ตัวหนังสือด้วย ไม่งั้น recharts ใช้สีเริ่มต้น (เกือบดำ)
+                      // ซึ่งอ่านไม่ออกเลยบนพื้นหลังเข้มของแอป
+                      tick={{ fill: '#cbd5e1' }}
                     />
-                    <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} />
+                    <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} tick={{ fill: '#cbd5e1' }} />
                     <Tooltip
+                      cursor={{ fill: '#ffffff10' }}
                       contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px', color: '#fff', fontSize: '12px' }}
                       formatter={(val: any) => [`${val} ชั่วโมง`, 'ชั่วโมงสะสม']}
                       labelFormatter={(label, payload) => payload?.[0]?.payload?.fullName || label}
@@ -869,6 +900,8 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
                       {topEmployeeChartData.map((_, index) => (
                         <Cell key={`cell-${index}`} fill={index === 0 ? '#f59e0b' : index === 1 ? '#cbd5e1' : index === 2 ? '#d97706' : '#10b981'} />
                       ))}
+                      {/* แสดงตัวเลขบนแท่ง เพื่อให้อ่านค่าได้ทันทีโดยไม่ต้องเอาเมาส์ไปชี้ */}
+                      <LabelList dataKey="hours" position="top" fill="#e2e8f0" fontSize={11} fontWeight={700} />
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
@@ -945,8 +978,8 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
                       </linearGradient>
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="#ffffff15" vertical={false} />
-                    <XAxis dataKey="label" stroke="#94a3b8" fontSize={11} tickLine={false} />
-                    <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} />
+                    <XAxis dataKey="label" stroke="#94a3b8" fontSize={11} tickLine={false} tick={{ fill: '#cbd5e1' }} />
+                    <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} tick={{ fill: '#cbd5e1' }} />
                     <Tooltip
                       contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px', color: '#fff', fontSize: '12px' }}
                       formatter={(val: any) => [`${val} ชั่วโมง`, 'ชั่วโมงกิจกรรมวันนั้น']}
@@ -977,8 +1010,8 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={categoryChartData} layout="vertical" margin={{ top: 10, right: 20, left: 10, bottom: 10 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#ffffff15" horizontal={false} />
-                    <XAxis type="number" stroke="#94a3b8" fontSize={11} tickLine={false} />
-                    <YAxis dataKey="name" type="category" stroke="#94a3b8" fontSize={11} tickLine={false} width={100} />
+                    <XAxis type="number" stroke="#94a3b8" fontSize={11} tickLine={false} tick={{ fill: '#cbd5e1' }} />
+                    <YAxis dataKey="name" type="category" stroke="#94a3b8" fontSize={11} tickLine={false} tick={{ fill: '#cbd5e1' }} width={100} />
                     <Tooltip
                       contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px', color: '#fff', fontSize: '12px' }}
                       formatter={(val: any) => [`${val} ชั่วโมง`, 'รวมชั่วโมงหมวดหมู่นี้']}
@@ -997,6 +1030,56 @@ export const ActivityDashboard: React.FC<ActivityDashboardProps> = ({ currentUse
               </div>
             )}
           </div>
+        </div>
+
+        {/* Chart 5: ชั่วโมงแยกตามชื่อกิจกรรม — บอกว่าชั่วโมงที่สะสมมาจากกิจกรรมอะไรบ้าง */}
+        <div className="bg-slate-900/60 rounded-3xl p-5 border border-white/10 shadow-lg">
+          <div className="flex items-center justify-between mb-1">
+            <h3 className="font-th font-bold text-sm text-white flex items-center gap-2">
+              <i className="fa-solid fa-list-check text-cyan-400"></i>
+              <span>ชั่วโมงแยกตามกิจกรรม (Top 8)</span>
+            </h3>
+            <span className="text-[10px] text-slate-400 font-mono">(หน่วย: ชั่วโมง)</span>
+          </div>
+
+          {activityNameChartData.length > 0 ? (
+            <div className="h-72 w-full pt-2">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={activityNameChartData} layout="vertical" margin={{ top: 10, right: 46, left: 10, bottom: 10 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#ffffff15" horizontal={false} />
+                  <XAxis type="number" stroke="#94a3b8" fontSize={11} tickLine={false} tick={{ fill: '#cbd5e1' }} />
+                  <YAxis
+                    dataKey="name"
+                    type="category"
+                    stroke="#94a3b8"
+                    fontSize={10}
+                    tickLine={false}
+                    tick={{ fill: '#cbd5e1' }}
+                    width={140}
+                  />
+                  <Tooltip
+                    cursor={{ fill: '#ffffff10' }}
+                    contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px', color: '#fff', fontSize: '12px' }}
+                    formatter={(val: any, _n: any, item: any) => [
+                      `${val} ชั่วโมง (${item?.payload?.count || 0} ครั้ง)`,
+                      item?.payload?.category || 'กิจกรรม'
+                    ]}
+                    labelFormatter={(label, payload) => payload?.[0]?.payload?.fullName || label}
+                  />
+                  <Bar dataKey="hours" radius={[0, 6, 6, 0]}>
+                    {activityNameChartData.map((entry, index) => (
+                      <Cell key={`cell-act-${index}`} fill={entry.color} />
+                    ))}
+                    <LabelList dataKey="hours" position="right" fill="#e2e8f0" fontSize={11} fontWeight={700} />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <div className="h-72 flex items-center justify-center text-xs text-slate-400">
+              ยังไม่มีข้อมูลกิจกรรมในช่วงที่เลือก
+            </div>
+          )}
         </div>
       </div>
 

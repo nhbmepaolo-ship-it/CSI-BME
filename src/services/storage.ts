@@ -16,6 +16,28 @@ const KEYS = {
 };
 
 /**
+ * ตรวจว่าแท็บที่ Google ส่งกลับมาเป็นแท็บที่เราขอจริงหรือไม่
+ * จำเป็นเพราะ gviz จะส่ง "แท็บแรกของไฟล์" กลับมาเงียบๆ เมื่อหาแท็บตามชื่อไม่เจอ
+ * (แท็บแรกคือ CSI) ถ้าไม่กรอง จะถูกอ่านเป็นทะเบียนพนักงาน/แผนพัฒนา กลายเป็นข้อมูลขยะ
+ */
+function isSheetTabOfType(headerRow: string[], kind: 'staff' | 'coaching'): boolean {
+  const joined = headerRow.map(h => (h || '').trim().toLowerCase()).join(' | ');
+  const looksLikeCsi =
+    joined.includes('ประทับเวลา') ||
+    joined.includes('timestamp') ||
+    joined.includes('division') ||
+    joined.includes('ผู้ประเมิน') ||
+    joined.includes('สถานะการใช้บริการ');
+  if (looksLikeCsi) return false;
+
+  const signals =
+    kind === 'staff'
+      ? ['ชื่อ', 'เล่น', 'nick', 'user', 'pass', 'รูป', 'รหัส', 'name']
+      : ['รหัส', 'ชื่อ', 'ตำแหน่ง', 'สัตว์', 'โค้ช', 'coach', 'position', 'nick', 'เล่น'];
+  return signals.filter(x => joined.includes(x)).length >= 3;
+}
+
+/**
  * รูปแบบวันที่มาตรฐานที่เขียนลงชีท: dd/MM/yyyy (ปี ค.ศ.)
  * ตายตัว ไม่ขึ้นกับภาษาหรือ locale ของเครื่องผู้ใช้ จึงไม่มีทางได้ปี พ.ศ. ปนมา
  */
@@ -1424,7 +1446,7 @@ export class StorageService {
             const staffCsv = await staffRes.text();
             if (staffCsv && !staffCsv.includes('google-signin') && !staffCsv.includes('<!DOCTYPE html>')) {
               const staffRows = parseCSV(staffCsv);
-              if (staffRows.length > 1) {
+              if (staffRows.length > 1 && isSheetTabOfType(staffRows[0], 'staff')) {
                 let fullNameIdx = 0;
                 let nicknameIdx = 1;
                 let imgIdx = 2;
@@ -1487,7 +1509,7 @@ export class StorageService {
       }
 
       // 3. Fetch Coaching / แผนพัฒนา (try multiple common tab names)
-      const possibleCoachingTabs = ['แผนพัฒนา', 'แผนพัฒนาพนักงาน', 'Coaching', 'IDP', 'Coaching Records', 'แผนพัฒนา & Coaching', 'Sheet3'];
+      const possibleCoachingTabs = ['Coaching Data', 'แผนพัฒนา', 'แผนพัฒนาพนักงาน', 'Coaching', 'IDP', 'Coaching Records', 'แผนพัฒนา & Coaching', 'Sheet3'];
       const coachingRecords: CoachingRecord[] = [];
 
       for (const tabName of possibleCoachingTabs) {
@@ -1498,7 +1520,7 @@ export class StorageService {
             const coachCsv = await coachRes.text();
             if (coachCsv && !coachCsv.includes('google-signin') && !coachCsv.includes('<!DOCTYPE html>')) {
               const coachRows = parseCSV(coachCsv);
-              if (coachRows.length > 1) {
+              if (coachRows.length > 1 && isSheetTabOfType(coachRows[0], 'coaching')) {
                 let empIdIdx = 0, typeIdx = 1, posIdx = 2, fullIdx = 3, nickIdx = 4, animalIdx = 5, coachIdx = 6, t1Idx = 7, t2Idx = 8, t3Idx = 9, scoreIdx = 10, progIdx = 11, totalHoursIdx = 12;
 
                 const header = coachRows[0].map(h => (h || '').trim().toLowerCase());

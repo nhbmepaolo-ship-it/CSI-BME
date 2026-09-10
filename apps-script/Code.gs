@@ -481,6 +481,61 @@ function RUN_ซ่อมIDซ้ำ() {
   return result;
 }
 
+/**
+ * จัดรูปแบบวันที่ในแท็บกิจกรรมให้เป็น dd/MM/yyyy (ปี ค.ศ.) ทั้งหมด
+ * ใช้แก้กรณีที่แถวเก่าเป็น "28/05/26:08/00/00" ปนกับแถวใหม่ที่เป็น "8/5/2569"
+ */
+function RUN_จัดรูปแบบวันที่() {
+  var out = handleRequest({ parameter: { action: "normalize_dates" } });
+  var result = JSON.parse(out.getContent ? out.getContent() : out);
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+/**
+ * สำรวจแท็บทั้งหมดในไฟล์ แล้วบอกว่าแท็บไหน "ระบบใช้จริง" แท็บไหน "ลบได้"
+ * และเตือนถ้าแท็บที่จำเป็นหายไป (เช่น ข้อมูลพนักงาน ที่เก็บรูปพนักงาน)
+ * อ่านอย่างเดียว ไม่ลบอะไรให้เอง
+ */
+function RUN_ตรวจแท็บทั้งหมด() {
+  var ss = getSpreadsheet();
+
+  var required = {};
+  required[TAB_CSI]         = "ฐานข้อมูลผลประเมิน CSI (Google Form บันทึกลงที่นี่)";
+  required[TAB_ACTIVITY]    = "ฐานข้อมูลชั่วโมงกิจกรรม";
+  required[TAB_VOTES]       = "ฐานข้อมูลผลโหวตพนักงานในดวงใจ";
+  required[TAB_COACHING]    = "ฐานข้อมูลแผนพัฒนา / Coaching";
+  required[TAB_ORGCHART]    = "ฐานข้อมูลผังองค์กร";
+  required["ข้อมูลพนักงาน"] = "ฐานข้อมูลพนักงาน (ชื่อ/ชื่อเล่น/รูป/User/Pass) — จำเป็นสำหรับรูปโปรไฟล์";
+
+  var report = { ใช้งานจริง: [], ลบได้: [], หายไป: [] };
+  var existing = [];
+
+  ss.getSheets().forEach(function (sh) {
+    var name = sh.getName();
+    existing.push(name);
+    var rows = Math.max(sh.getLastRow() - 1, 0);
+    if (required.hasOwnProperty(name)) {
+      report.ใช้งานจริง.push({ แท็บ: name, แถวข้อมูล: rows, หน้าที่: required[name] });
+    } else {
+      report.ลบได้.push({ แท็บ: name, แถวข้อมูล: rows, หมายเหตุ: "ระบบไม่ได้ใช้แท็บนี้" });
+    }
+  });
+
+  for (var need in required) {
+    if (required.hasOwnProperty(need) && existing.indexOf(need) === -1) {
+      report.หายไป.push({ แท็บ: need, ผลกระทบ: required[need] });
+    }
+  }
+
+  report.สรุป =
+    "ใช้งานจริง " + report.ใช้งานจริง.length + " แท็บ · ลบได้ " + report.ลบได้.length + " แท็บ" +
+    (report.หายไป.length ? " · ⚠️ ขาดแท็บที่จำเป็น " + report.หายไป.length + " แท็บ" : " · ครบถ้วนดี");
+
+  Logger.log(JSON.stringify(report, null, 2));
+  return report;
+}
+
 function json(obj) {
   return ContentService
     .createTextOutput(JSON.stringify(obj))

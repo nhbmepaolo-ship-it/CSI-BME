@@ -244,6 +244,23 @@ export function createApiApp(): express.Express {
         const staffRows = parseCSV(staffCsv);
         if (staffRows.length <= 1) continue;
 
+        // Google's gviz CSV endpoint returns the FIRST tab of the spreadsheet when the
+        // requested tab name doesn't exist, instead of erroring. With no guard here, the
+        // CSI form-responses tab was being parsed as the employee roster — producing ~426
+        // fake "employees" whose names were timestamps and who had no photo, which then
+        // showed up as junk cards on the coaching page. Same class of bug already fixed for
+        // the coaching tab below; this is the staff half of it.
+        const staffHeaderJoined = staffRows[0].map(h => (h || '').trim().toLowerCase()).join(' | ');
+        const staffLooksLikeCsi =
+          staffHeaderJoined.includes('ประทับเวลา') ||
+          staffHeaderJoined.includes('timestamp') ||
+          staffHeaderJoined.includes('division') ||
+          staffHeaderJoined.includes('ผู้ประเมิน') ||
+          staffHeaderJoined.includes('สถานะการใช้บริการ');
+        const staffSignals = ['ชื่อ', 'เล่น', 'nick', 'user', 'pass', 'รูป', 'รหัส', 'name'];
+        const staffSignalCount = staffSignals.filter(s => staffHeaderJoined.includes(s)).length;
+        if (staffLooksLikeCsi || staffSignalCount < 3) continue;
+
         let fullNameIdx = 0;
         let nicknameIdx = 1;
         let imgIdx = 2;
@@ -331,7 +348,7 @@ export function createApiApp(): express.Express {
       if (coachingCache && coachingCache.expiresAt > Date.now()) {
         coachingRecords = coachingCache.records;
       } else {
-      const possibleCoachingTabs = ['แผนพัฒนา', 'แผนพัฒนาพนักงาน', 'Coaching', 'IDP', 'Coaching Records', 'แผนพัฒนา & Coaching', 'Sheet3'];
+      const possibleCoachingTabs = ['Coaching Data', 'แผนพัฒนา', 'แผนพัฒนาพนักงาน', 'Coaching', 'IDP', 'Coaching Records', 'แผนพัฒนา & Coaching', 'Sheet3'];
 
       const coachingTabResults = await Promise.allSettled(
         possibleCoachingTabs.map(tabName =>
