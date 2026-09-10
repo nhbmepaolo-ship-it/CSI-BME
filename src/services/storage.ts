@@ -15,6 +15,17 @@ const KEYS = {
   COACHING: 'csi_bme_coaching_records_v2'
 };
 
+/**
+ * รูปแบบวันที่มาตรฐานที่เขียนลงชีท: dd/MM/yyyy (ปี ค.ศ.)
+ * ตายตัว ไม่ขึ้นกับภาษาหรือ locale ของเครื่องผู้ใช้ จึงไม่มีทางได้ปี พ.ศ. ปนมา
+ */
+function formatSheetDate(value: string | number | Date): string {
+  const d = value instanceof Date ? value : new Date(value);
+  if (isNaN(d.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
+}
+
 export class StorageService {
   // Generic caller for the multi-action Google Apps Script Web App (activities, votes,
   // org chart). Used for BOTH pushing local changes out and pulling shared data in, so
@@ -31,6 +42,32 @@ export class StorageService {
   // while that browser silently talked to the wrong Apps Script and showed no data at all.
   // Making the server value authoritative means fixing the env var fixes every device.
   private static gasDefaultUrlCache: string | null = null;
+
+  /**
+   * ดึงการตั้งค่ากลางจากเซิร์ฟเวอร์มาใช้ตอนเปิดแอป
+   * สำคัญเพราะเบราว์เซอร์ที่เคยบันทึก Sheet ID เก่าไว้ใน localStorage จะยึดของเก่าตลอด
+   * ทำให้เครื่องนั้นอ่าน CSI จากไฟล์ผิดไฟล์ ทั้งที่เซิร์ฟเวอร์ตั้งค่าถูกแล้ว
+   * (เป็นสาเหตุที่ข้อมูล CSI เดือนล่าสุดไม่ขึ้นมาก่อนหน้านี้)
+   */
+  static async syncServerConfig(): Promise<void> {
+    try {
+      const res = await fetch('/api/gas-config');
+      const data = await res.json().catch(() => ({}));
+
+      const sheetId = (data.sheetId || '').trim();
+      if (sheetId && localStorage.getItem(KEYS.SHEET_ID) !== sheetId) {
+        localStorage.setItem(KEYS.SHEET_ID, sheetId);
+      }
+
+      const gasUrl = (data.gasUrl || '').trim();
+      this.gasDefaultUrlCache = gasUrl;
+      if (gasUrl && (localStorage.getItem('csi_google_sheets_url') || '').trim() !== gasUrl) {
+        localStorage.setItem('csi_google_sheets_url', gasUrl);
+      }
+    } catch {
+      /* ออฟไลน์หรือเรียกไม่ได้ ก็ใช้ค่าที่มีอยู่เดิมต่อไป */
+    }
+  }
 
   private static async getGasUrl(): Promise<string> {
     if (this.gasDefaultUrlCache === null) {
@@ -777,7 +814,11 @@ export class StorageService {
       totalRecords: activities.length,
       activities: activities.map(a => ({
         id: a.id,
-        date: new Date(a.timestamp).toLocaleDateString('th-TH'),
+        // เขียนวันที่เป็น dd/MM/yyyy ปี ค.ศ. เสมอ
+        // ของเดิมใช้ toLocaleDateString('th-TH') ซึ่งได้ปี พ.ศ. (8/5/2569) ปนกับแถวเก่า
+        // ที่เป็น ค.ศ. 2 หลัก (01/04/26) อยู่ในคอลัมน์เดียวกัน ทำให้เรียงลำดับไม่ได้
+        // และดูแล้วสับสนว่าตกลงเป็นปีไหนกันแน่
+        date: formatSheetDate(a.timestamp),
         timestamp: a.timestamp,
         username: a.username,
         fullName: a.fullName,
@@ -1053,7 +1094,7 @@ export class StorageService {
 
   // Google Sheet ID & Auto Pull
   static getGoogleSheetId(): string {
-    return localStorage.getItem(KEYS.SHEET_ID) || '11qoHRaakTjvDWvOekqTTlP2SFcqdfys6cT653wRfjUA';
+    return localStorage.getItem(KEYS.SHEET_ID) || '1eswu63LgsBcdAZZeRvfnJ5v3SlkM7n1y3K5Hwbc-Ryw';
   }
 
   static saveGoogleSheetId(id: string): void {

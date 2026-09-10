@@ -126,8 +126,9 @@ export default function App() {
     StorageService.setCurrentUser(null); // clear any leftover session from earlier versions of the app
     setCurrentUser(null);
 
-    // Immediately trigger auto-sync from Google Sheet on app startup
-    triggerGlobalSync(true);
+    // Adopt the server-wide config (correct Sheet ID / Apps Script URL) BEFORE the first
+    // sync, so a browser holding an outdated Sheet ID doesn't fetch from the wrong file.
+    StorageService.syncServerConfig().finally(() => triggerGlobalSync(true));
 
     // Set up periodic background auto-sync every 3 minutes. This still means nobody ever
     // has to click a button — but checking every 30 seconds like an earlier version did

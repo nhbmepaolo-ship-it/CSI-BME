@@ -742,7 +742,7 @@ export const CSIDashboard: React.FC = () => {
                   type="text"
                   value={sheetId}
                   onChange={e => setSheetId(e.target.value)}
-                  placeholder="เช่น 11qoHRaakTjvDWvOekqTTlP2SFcqdfys6cT653wRfjUA"
+                  placeholder="เช่น 1eswu63LgsBcdAZZeRvfnJ5v3SlkM7n1y3K5Hwbc-Ryw"
                   className="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white font-mono text-xs outline-none focus:border-emerald-500"
                 />
                 <p className="text-[11px] text-slate-400 mt-1">

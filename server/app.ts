@@ -64,7 +64,7 @@ export function createApiApp(): express.Express {
   // API Route to Auto-Pull Data from Google Sheet ID directly
   app.get('/api/fetch-sheet-data', async (req, res) => {
     try {
-      const sheetId = (req.query.sheetId as string) || '11qoHRaakTjvDWvOekqTTlP2SFcqdfys6cT653wRfjUA';
+      const sheetId = (req.query.sheetId as string) || (process.env.GOOGLE_SHEET_ID || '').trim() || '1eswu63LgsBcdAZZeRvfnJ5v3SlkM7n1y3K5Hwbc-Ryw';
       const sheetName = (req.query.sheetName as string) || 'CSI Electronic (การตอบกลับ)';
 
       console.log(`Auto-pulling data from Google Sheet ID: ${sheetId}, Sheet: ${sheetName}`);
@@ -743,7 +743,12 @@ export function createApiApp(): express.Express {
   // environment variables and every device is connected automatically from then on. Not
   // sensitive — it's just an endpoint address, not a credential — so it's fine to expose.
   app.get('/api/gas-config', (req, res) => {
-    res.json({ gasUrl: (process.env.GAS_WEB_APP_URL || '').trim() });
+    res.json({
+      gasUrl: (process.env.GAS_WEB_APP_URL || '').trim(),
+      // ให้ทุกเครื่องใช้ไฟล์ชีทเดียวกัน แก้ที่เดียวจบ — เบราว์เซอร์ที่เคยบันทึก ID เก่าไว้
+      // จะถูกเขียนทับให้อัตโนมัติ (ดู syncServerConfig ฝั่ง client)
+      sheetId: (process.env.GOOGLE_SHEET_ID || '').trim() || '1eswu63LgsBcdAZZeRvfnJ5v3SlkM7n1y3K5Hwbc-Ryw'
+    });
   });
 
   // API Proxy Route for Google Apps Script Sync

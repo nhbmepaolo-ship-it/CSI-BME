@@ -18,7 +18,8 @@
 //   CRON_SECRET           (Vercel automatically sends this as "Authorization: Bearer <value>"
 //                          when calling a Cron Job route — see vercel.json)
 
-const DEFAULT_SHEET_ID = '11qoHRaakTjvDWvOekqTTlP2SFcqdfys6cT653wRfjUA';
+// ไฟล์เดียวกับที่ Google Form บันทึกคำตอบ CSI และเป็นที่อยู่ของแท็บกิจกรรม/Votes/Coaching
+const DEFAULT_SHEET_ID = '1eswu63LgsBcdAZZeRvfnJ5v3SlkM7n1y3K5Hwbc-Ryw';
 const CSI_TAB_NAME = 'CSI Electronic (การตอบกลับ)';
 
 const fetchWithTimeout = async (url: string, timeoutMs = 9000, extraOptions: RequestInit = {}): Promise<Response> => {

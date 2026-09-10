@@ -26,12 +26,23 @@
 var SPREADSHEET_ID = "1eswu63LgsBcdAZZeRvfnJ5v3SlkM7n1y3K5Hwbc-Ryw";
 
 /**
- * แบบประเมิน CSI อยู่คนละไฟล์กับกิจกรรม/โหวต/Coaching
- * ระบบอ่านผล CSI จากไฟล์นี้ (ไฟล์เดียวกับที่ Google Form บันทึกคำตอบลงไป)
- * ถ้าเขียน CSI ลงไฟล์เดิม (SPREADSHEET_ID) ข้อมูลจะไปคนละที่กับที่ระบบอ่าน
- * แล้วผู้ใช้จะไม่มีวันเห็นคำตอบที่เพิ่งบันทึกเลย จึงต้องระบุไฟล์ CSI แยกไว้ตรงนี้
+ * แบบประเมิน CSI อาจอยู่คนละไฟล์กับกิจกรรม/โหวต/Coaching
+ * ตั้งค่าได้ที่ การตั้งค่าโปรเจกต์ > พร็อพเพอร์ตี้ของสคริปต์ ชื่อ CSI_SPREADSHEET_ID
+ * ถ้าไม่ตั้ง จะใช้ไฟล์เดียวกับที่สคริปต์นี้ผูกอยู่ (ปลอดภัยที่สุด ไม่เขียนข้ามไฟล์โดยไม่ตั้งใจ)
  */
-var CSI_SPREADSHEET_ID = "11qoHRaakTjvDWvOekqTTlP2SFcqdfys6cT653wRfjUA";
+function getCsiSpreadsheet_(fallbackSs) {
+  var id = "";
+  try {
+    id = (PropertiesService.getScriptProperties().getProperty("CSI_SPREADSHEET_ID") || "").trim();
+  } catch (e) { /* ไม่มีสิทธิ์อ่าน property ก็ใช้ไฟล์ปัจจุบัน */ }
+
+  if (!id) return fallbackSs;
+  try {
+    return SpreadsheetApp.openById(id);
+  } catch (e) {
+    throw new Error("เปิดไฟล์ CSI ตาม CSI_SPREADSHEET_ID ไม่ได้ (ตรวจสิทธิ์เข้าถึง): " + e);
+  }
+}
 
 var TAB_CSI      = "CSI Electronic (การตอบกลับ)";
 var TAB_COACHING = "Coaching Data";
@@ -269,7 +280,7 @@ function collectWeeklyData_() {
   var staffMap = {};
 
   try {
-    var csiSs = SpreadsheetApp.openById(CSI_SPREADSHEET_ID);
+    var csiSs = getCsiSpreadsheet_(SpreadsheetApp.getActiveSpreadsheet());
     var csiSheet = csiSs.getSheetByName(TAB_CSI);
     if (csiSheet && csiSheet.getLastRow() > 1) {
       var width = Math.min(csiSheet.getLastColumn(), 25);
@@ -845,6 +856,40 @@ function handleRequest(e) {
       });
     }
 
+    /**
+     * จัดรูปแบบวันที่ในแท็บกิจกรรมให้เป็น dd/MM/yyyy (ค.ศ.) ทั้งหมด
+     * แก้ปัญหาที่แถวเก่าเป็น "01/04/26:17/00/00" แต่แถวใหม่เป็น "8/5/2569"
+     * ปนกันอยู่ในคอลัมน์เดียว จนเรียงลำดับไม่ได้และอ่านแล้วสับสน
+     */
+    if (action === "normalize_dates") {
+      var shN = ss.getSheetByName(TAB_ACTIVITY) || ss.getSheetByName("ชีต8");
+      if (!shN || shN.getLastRow() < 2) {
+        return json({ success: true, message: "ไม่มีข้อมูลให้จัดรูปแบบ", data: { changed: 0 } });
+      }
+      var rngN = shN.getRange(2, 2, shN.getLastRow() - 1, 1); // คอลัมน์ B = วันที่ทำกิจกรรม
+      var valsN = rngN.getValues();
+      var changedN = 0;
+
+      for (var iN = 0; iN < valsN.length; iN++) {
+        var iso = toIso(valsN[iN][0]);
+        if (!iso) continue;
+        var parts = iso.substring(0, 10).split("-");
+        if (parts.length !== 3) continue;
+        var formatted = parts[2] + "/" + parts[1] + "/" + parts[0];
+        if (String(valsN[iN][0]).trim() !== formatted) {
+          valsN[iN][0] = formatted;
+          changedN++;
+        }
+      }
+
+      rngN.setValues(valsN);
+      return json({
+        success: true,
+        message: "จัดรูปแบบวันที่แล้ว " + changedN + " แถว (เป็น dd/MM/yyyy ปี ค.ศ.)",
+        data: { changed: changedN, totalRows: valsN.length }
+      });
+    }
+
     if (action === "setup_sheets") {
       getActivityTab(ss);
       getTab(ss, TAB_VOTES, VOTE_HEADER);
@@ -867,16 +912,11 @@ function handleRequest(e) {
     if (action === "add_csi" || data.csiRecord) {
       var csi = data.csiRecord || data;
       // เขียนลงไฟล์ CSI โดยตรง (ดูคำอธิบายที่ CSI_SPREADSHEET_ID)
-      var csiSs = ss;
+      var csiSs;
       try {
-        if (CSI_SPREADSHEET_ID && CSI_SPREADSHEET_ID !== SPREADSHEET_ID) {
-          csiSs = SpreadsheetApp.openById(CSI_SPREADSHEET_ID);
-        }
+        csiSs = getCsiSpreadsheet_(ss);
       } catch (errCsi) {
-        return json({
-          success: false,
-          message: "เปิดไฟล์ CSI ไม่ได้ (ตรวจสอบสิทธิ์เข้าถึงไฟล์): " + errCsi.toString()
-        });
+        return json({ success: false, message: String(errCsi) });
       }
       var sh = getTab(csiSs, TAB_CSI);
       sh.appendRow([

@@ -72,37 +72,108 @@ function oklchToRgb(value: string): string | null {
   return alpha >= 1 ? `rgb(${r}, ${g}, ${bl})` : `rgba(${r}, ${g}, ${bl}, ${alpha})`;
 }
 
-/** Rewrite every oklch() colour in a cloned document into rgb() so html2canvas can parse it. */
+/**
+ * Resolve ANY modern CSS colour function to plain rgb()/rgba() using the browser's own
+ * parser, via a throwaway canvas. Covers oklch(), oklab(), lab(), lch(), color() and
+ * color-mix() in one go — hand-rolling the maths for each of these is how the first
+ * attempt at this fix ended up handling oklch but still crashing on oklab.
+ * Returns null when the browser cannot parse the value either.
+ */
+let colorProbeCtx: CanvasRenderingContext2D | null = null;
+
+function resolveColor(value: string): string | null {
+  if (!value) return null;
+  try {
+    if (!colorProbeCtx) {
+      colorProbeCtx = document.createElement('canvas').getContext('2d');
+    }
+    const ctx = colorProbeCtx;
+    if (!ctx) return null;
+
+    // Two sentinels: if the assignment is rejected, fillStyle keeps the sentinel, so a
+    // value that survives both probes is genuinely unparseable.
+    ctx.fillStyle = '#000000';
+    ctx.fillStyle = value;
+    const first = ctx.fillStyle as string;
+
+    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = value;
+    const second = ctx.fillStyle as string;
+
+    if (first !== second) return null; // rejected by the parser
+    return first;
+  } catch {
+    return null;
+  }
+}
+
+/** CSS colour functions html2canvas 1.4.x cannot parse. */
+const MODERN_COLOR_FN = /\b(?:oklch|oklab|lch|lab|color-mix|color)\(/i;
+
+/** Replace every modern colour function inside a compound value (gradients, shadows...). */
+function replaceModernColors(value: string): string {
+  // Matches a colour function plus one level of nested parentheses (color-mix needs it).
+  return value.replace(
+    /\b(?:oklch|oklab|lch|lab|color-mix|color)\((?:[^()]|\([^()]*\))*\)/gi,
+    match => resolveColor(match) || oklchToRgb(match) || 'rgb(0, 0, 0)'
+  );
+}
+
+/**
+ * Rewrite unsupported colour functions in the cloned document html2canvas is about to
+ * render, so it never meets one. Only the throwaway clone is touched — the live page the
+ * user sees is left exactly as it is.
+ */
 function sanitizeOklchColors(root: HTMLElement | Document): void {
-  const doc = (root as Document).body ? (root as Document) : (root as HTMLElement).ownerDocument;
+  const doc: Document | null = (root as Document).body
+    ? (root as Document)
+    : (root as HTMLElement).ownerDocument;
   if (!doc) return;
+
+  const view = doc.defaultView || window;
+
+  // Tailwind v4 declares its palette as custom properties on :root. Those cascade into
+  // every element, so they must be rewritten too or the raw oklch string reaches
+  // html2canvas through var() references.
+  const rootEl = doc.documentElement;
+  try {
+    const rootStyles = view.getComputedStyle(rootEl);
+    for (let i = 0; i < rootStyles.length; i++) {
+      const prop = rootStyles[i];
+      if (!prop.startsWith('--')) continue;
+      const val = rootStyles.getPropertyValue(prop);
+      if (val && MODERN_COLOR_FN.test(val)) {
+        rootEl.style.setProperty(prop, replaceModernColors(val));
+      }
+    }
+  } catch {
+    /* ignore — falls through to the per-element pass below */
+  }
 
   const elements = doc.querySelectorAll<HTMLElement>('*');
   elements.forEach(el => {
     let computed: CSSStyleDeclaration;
     try {
-      computed = (doc.defaultView || window).getComputedStyle(el);
+      computed = view.getComputedStyle(el);
     } catch {
       return;
     }
 
     OKLCH_PROPS.forEach(prop => {
       const current = computed[prop as any] as string;
-      if (typeof current === 'string' && current.includes('oklch')) {
-        const converted = oklchToRgb(current);
+      if (typeof current === 'string' && MODERN_COLOR_FN.test(current)) {
+        const converted = resolveColor(current) || replaceModernColors(current);
         if (converted) (el.style as any)[prop] = converted;
       }
     });
 
-    // Gradients and shadows can carry oklch too, and are not covered by the list above.
-    const bgImage = computed.backgroundImage;
-    if (bgImage && bgImage.includes('oklch')) {
-      el.style.backgroundImage = bgImage.replace(/oklch\([^)]+\)/gi, m => oklchToRgb(m) || 'rgb(0, 0, 0)');
-    }
-    const shadow = computed.boxShadow;
-    if (shadow && shadow.includes('oklch')) {
-      el.style.boxShadow = shadow.replace(/oklch\([^)]+\)/gi, m => oklchToRgb(m) || 'rgb(0, 0, 0)');
-    }
+    // Gradients, shadows and filters can embed colours too.
+    (['backgroundImage', 'boxShadow', 'textShadow', 'filter'] as const).forEach(prop => {
+      const val = computed[prop] as string;
+      if (typeof val === 'string' && MODERN_COLOR_FN.test(val)) {
+        (el.style as any)[prop] = replaceModernColors(val);
+      }
+    });
   });
 }
 import { jsPDF } from 'jspdf';
