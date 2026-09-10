@@ -91,15 +91,47 @@ export class StorageService {
     return INITIAL_ORG_CHART;
   }
 
+  // Datasets that are edited locally AND pulled from the sheet need a guard: if the push
+  // of a local edit fails (network blip, Apps Script not redeployed, no URL configured),
+  // the next background pull would otherwise overwrite that edit with the sheet's stale
+  // copy — silently undoing the change. That is what made a person removed from the org
+  // chart reappear a few minutes later. So a local edit is marked "pending" until its push
+  // is CONFIRMED successful, and a pull refuses to touch a dataset with a pending edit
+  // (retrying the push instead).
+  private static PENDING_KEYS = {
+    ORG_CHART: 'csi_pending_orgchart',
+    COACHING: 'csi_pending_coaching'
+  };
+
+  private static markPending(key: string): void {
+    try { localStorage.setItem(key, '1'); } catch { /* ignore */ }
+  }
+
+  private static clearPending(key: string): void {
+    try { localStorage.removeItem(key); } catch { /* ignore */ }
+  }
+
+  private static isPending(key: string): boolean {
+    try { return localStorage.getItem(key) === '1'; } catch { return false; }
+  }
+
   static saveOrgChart(config: OrgChartConfig): void {
     try {
       localStorage.setItem(KEYS.ORG_CHART, JSON.stringify(config));
     } catch (e) {
       console.error('Failed to save org chart:', e);
     }
-    // Push to the shared Google Sheet too (fire-and-forget) so other devices see the
+    // Push to the shared Google Sheet too so other devices see the
     // update on their next sync, instead of the org chart only living on this browser.
-    this.callGasAction('sync_orgchart', { orgChart: config });
+    // Marked pending first, and only cleared once the sheet confirms the write — see
+    // PENDING_KEYS above for why this matters.
+    this.markPending(this.PENDING_KEYS.ORG_CHART);
+    this.callGasAction('sync_orgchart', { orgChart: config })
+      .then(res => {
+        if (res.success) this.clearPending(this.PENDING_KEYS.ORG_CHART);
+        else console.warn('Org chart push failed, keeping local edit:', res.message);
+      })
+      .catch(err => console.warn('Org chart push failed, keeping local edit:', err));
   }
 
   // Pull the shared org chart from Google Sheets (last-write-wins) and store it locally.
@@ -107,6 +139,15 @@ export class StorageService {
   // Returns whether the org chart actually changed, so the caller can skip refreshing the
   // screen when a poll finds nothing new (see App.tsx's refreshViewIfSafe).
   static async pullOrgChartFromSheet(): Promise<boolean> {
+    // A local edit that hasn't been successfully pushed yet must win — otherwise this pull
+    // silently reverts it (see PENDING_KEYS). Retry the push instead of overwriting.
+    if (this.isPending(this.PENDING_KEYS.ORG_CHART)) {
+      const local = this.getOrgChart();
+      const res = await this.callGasAction('sync_orgchart', { orgChart: local });
+      if (res.success) this.clearPending(this.PENDING_KEYS.ORG_CHART);
+      return false;
+    }
+
     const result = await this.callGasAction('get_orgchart');
     if (result.success && result.data && Array.isArray(result.data.nodes) && result.data.nodes.length > 0) {
       const before = localStorage.getItem(KEYS.ORG_CHART);
@@ -175,7 +216,13 @@ export class StorageService {
       // the same way activities/votes/org chart already do, so an edit made on one device
       // (e.g. updating progress %, hours, or topics) is visible from other devices too and
       // actually lands in the "แผนพัฒนา" tab instead of only living in this browser.
-      this.callGasAction('sync_coaching', { coachingRecords: [updated] });
+      this.markPending(this.PENDING_KEYS.COACHING);
+      this.callGasAction('sync_coaching', { coachingRecords: [updated] })
+        .then(res => {
+          if (res.success) this.clearPending(this.PENDING_KEYS.COACHING);
+          else console.warn('Coaching push failed, keeping local edit:', res.message);
+        })
+        .catch(err => console.warn('Coaching push failed, keeping local edit:', err));
     }
     return list;
   }
@@ -190,6 +237,14 @@ export class StorageService {
   // Called during the periodic global sync, same pattern as pullActivitiesFromSheet.
   // Returns whether anything actually changed (see pullOrgChartFromSheet for why).
   static async pullCoachingFromSheet(): Promise<boolean> {
+    // Same protection as the org chart: never let a pull revert an edit that hasn't been
+    // confirmed as saved to the sheet yet.
+    if (this.isPending(this.PENDING_KEYS.COACHING)) {
+      const res = await this.callGasAction('sync_coaching', { coachingRecords: this.getCoachingRecords() });
+      if (res.success) this.clearPending(this.PENDING_KEYS.COACHING);
+      return false;
+    }
+
     const result = await this.callGasAction('get_coaching');
     if (!result.success || !Array.isArray(result.data) || result.data.length === 0) return false;
 
@@ -260,23 +315,35 @@ export class StorageService {
     }
 
     if (orgChart && Array.isArray(orgChart.nodes) && orgChart.nodes.length > 0) {
-      const before = localStorage.getItem(KEYS.ORG_CHART);
-      const after = JSON.stringify(orgChart);
-      if (before !== after) {
-        changed = true;
-        localStorage.setItem(KEYS.ORG_CHART, after);
+      // Respect an unpushed local edit here too — this combined path must not become a
+      // back door that reverts what pullOrgChartFromSheet correctly refuses to touch.
+      if (this.isPending(this.PENDING_KEYS.ORG_CHART)) {
+        const res = await this.callGasAction('sync_orgchart', { orgChart: this.getOrgChart() });
+        if (res.success) this.clearPending(this.PENDING_KEYS.ORG_CHART);
+      } else {
+        const before = localStorage.getItem(KEYS.ORG_CHART);
+        const after = JSON.stringify(orgChart);
+        if (before !== after) {
+          changed = true;
+          localStorage.setItem(KEYS.ORG_CHART, after);
+        }
       }
     }
 
     if (Array.isArray(coaching) && coaching.length > 0) {
-      const local = this.getCoachingRecords();
-      const byEmpId = new Map<string, CoachingRecord>();
-      local.forEach(c => { if (c.empId) byEmpId.set(c.empId, c); });
-      coaching.forEach((r: any) => { if (r && r.empId) byEmpId.set(r.empId, r); });
-      const merged = Array.from(byEmpId.values());
-      if (JSON.stringify(merged) !== JSON.stringify(local)) {
-        changed = true;
-        this.saveCoachingRecords(merged);
+      if (this.isPending(this.PENDING_KEYS.COACHING)) {
+        const res = await this.callGasAction('sync_coaching', { coachingRecords: this.getCoachingRecords() });
+        if (res.success) this.clearPending(this.PENDING_KEYS.COACHING);
+      } else {
+        const local = this.getCoachingRecords();
+        const byEmpId = new Map<string, CoachingRecord>();
+        local.forEach(c => { if (c.empId) byEmpId.set(c.empId, c); });
+        coaching.forEach((r: any) => { if (r && r.empId) byEmpId.set(r.empId, r); });
+        const merged = Array.from(byEmpId.values());
+        if (JSON.stringify(merged) !== JSON.stringify(local)) {
+          changed = true;
+          this.saveCoachingRecords(merged);
+        }
       }
     }
 
@@ -510,8 +577,31 @@ export class StorageService {
 
   static addCSIRecord(record: CSIRecord): void {
     const list = this.getCSIRecords();
-    list.unshift({ ...record, source: 'local' });
+    const local: CSIRecord = { ...record, source: 'local' };
+    list.unshift(local);
     this.saveCSIRecords(list);
+
+    // CSI was the one module that never wrote back to the sheet — submissions lived only
+    // in the browser that made them, so nobody else ever saw them and clearing site data
+    // lost them. Push it, and flag the local copy as `pushed` once the sheet confirms, so
+    // the next sync can safely drop it in favour of the authoritative sheet row (see the
+    // merge in fetchAndSyncFromGoogleSheet) instead of showing the same response twice.
+    this.callGasAction('add_csi', { csiRecord: record })
+      .then(res => {
+        if (!res.success) {
+          console.warn('CSI push failed, keeping local copy:', res.message);
+          return;
+        }
+        const current = this.getCSIRecords();
+        const idx = current.findIndex(
+          r => r.source === 'local' && r.timestamp === local.timestamp && r.dept === local.dept && r.staffName === local.staffName
+        );
+        if (idx !== -1) {
+          current[idx] = { ...current[idx], pushed: true };
+          this.saveCSIRecords(current);
+        }
+      })
+      .catch(err => console.warn('CSI push failed, keeping local copy:', err));
   }
 
   // Vote Records
@@ -1023,7 +1113,10 @@ export class StorageService {
         // tag at all (from before this fix) is dropped here — self-healing away whatever
         // garbage had accumulated, since it's indistinguishable from stale sheet data anyway.
         const existing = this.getCSIRecords();
-        const localOnly = existing.filter(r => r.source === 'local');
+        // Keep only local submissions that have NOT yet been confirmed as written to the
+        // sheet. Once pushed, the sheet's own row is authoritative, so keeping the local
+        // copy as well would show the same evaluation twice.
+        const localOnly = existing.filter(r => r.source === 'local' && !r.pushed);
         const freshFromSheet = fetchedCsi.map(r => ({ ...r, source: 'sheet' as const }));
         const nextCsi = [...localOnly, ...freshFromSheet];
         if (JSON.stringify(nextCsi) !== JSON.stringify(existing)) {

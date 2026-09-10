@@ -25,6 +25,14 @@
 
 var SPREADSHEET_ID = "1eswu63LgsBcdAZZeRvfnJ5v3SlkM7n1y3K5Hwbc-Ryw";
 
+/**
+ * แบบประเมิน CSI อยู่คนละไฟล์กับกิจกรรม/โหวต/Coaching
+ * ระบบอ่านผล CSI จากไฟล์นี้ (ไฟล์เดียวกับที่ Google Form บันทึกคำตอบลงไป)
+ * ถ้าเขียน CSI ลงไฟล์เดิม (SPREADSHEET_ID) ข้อมูลจะไปคนละที่กับที่ระบบอ่าน
+ * แล้วผู้ใช้จะไม่มีวันเห็นคำตอบที่เพิ่งบันทึกเลย จึงต้องระบุไฟล์ CSI แยกไว้ตรงนี้
+ */
+var CSI_SPREADSHEET_ID = "11qoHRaakTjvDWvOekqTTlP2SFcqdfys6cT653wRfjUA";
+
 var TAB_CSI      = "CSI Electronic (การตอบกลับ)";
 var TAB_COACHING = "Coaching Data";
 var TAB_VOTES    = "Votes";
@@ -472,7 +480,19 @@ function handleRequest(e) {
     // 1) ผลประเมิน CSI
     if (action === "add_csi" || data.csiRecord) {
       var csi = data.csiRecord || data;
-      var sh = getTab(ss, TAB_CSI);
+      // เขียนลงไฟล์ CSI โดยตรง (ดูคำอธิบายที่ CSI_SPREADSHEET_ID)
+      var csiSs = ss;
+      try {
+        if (CSI_SPREADSHEET_ID && CSI_SPREADSHEET_ID !== SPREADSHEET_ID) {
+          csiSs = SpreadsheetApp.openById(CSI_SPREADSHEET_ID);
+        }
+      } catch (errCsi) {
+        return json({
+          success: false,
+          message: "เปิดไฟล์ CSI ไม่ได้ (ตรวจสอบสิทธิ์เข้าถึงไฟล์): " + errCsi.toString()
+        });
+      }
+      var sh = getTab(csiSs, TAB_CSI);
       sh.appendRow([
         csi.timestamp || new Date().toLocaleString("th-TH"),
         csi.site || "PTP",

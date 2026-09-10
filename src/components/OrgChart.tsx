@@ -297,7 +297,96 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
     } catch (err: any) {
       console.error('Export PDF error:', err);
       if (showToast) showToast('error', `เกิดข้อผิดพลาดในการดาวน์โหลด PDF: ${err?.message || ''} กำลังใช้วิธีพิมพ์เอกสารแทน...`);
-      window.print();
+      // Fall back to the isolated chart-only print, NOT window.print() — the latter prints
+      // the whole app DOM (sidebar, toolbar and all) and clips the chart.
+      setIsExporting(false);
+      await handlePrint();
+      return;
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  // Print Handler
+  //
+  // Previously this called window.print() directly, which prints the ENTIRE app DOM —
+  // sidebar, header, toolbar buttons and all — and clips the chart because it is wider
+  // than the page. There is also no print stylesheet, and the dark theme's white-on-navy
+  // text prints nearly blank since browsers drop backgrounds by default.
+  //
+  // Instead, capture the chart exactly the way the (already working) PDF export does, then
+  // print just that image in an isolated window sized to landscape. What you see on screen
+  // is what comes out of the printer.
+  const handlePrint = async () => {
+    if (!chartRef.current) return;
+    setIsExporting(true);
+
+    try {
+      if (showToast) showToast('success', 'กำลังเตรียมผังองค์กรสำหรับพิมพ์...');
+
+      await prepareChartImagesForExport(chartRef.current);
+
+      const canvas = await html2canvas(chartRef.current, {
+        scale: 2,
+        useCORS: true,
+        allowTaint: false,
+        backgroundColor: '#0f172a',
+        logging: false
+      });
+
+      const imgData = canvas.toDataURL('image/png');
+      const printWindow = window.open('', '_blank');
+
+      if (!printWindow) {
+        if (showToast) showToast('error', 'เบราว์เซอร์บล็อกหน้าต่างพิมพ์ กรุณาอนุญาต pop-up แล้วลองใหม่');
+        return;
+      }
+
+      printWindow.document.write(`<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Organizational Chart BME PTP</title>
+    <style>
+      @page { size: A4 landscape; margin: 8mm; }
+      html, body { margin: 0; padding: 0; background: #fff; }
+      img {
+        display: block;
+        width: 100%;
+        height: auto;
+        /* keep the whole chart on one sheet rather than slicing it across pages */
+        max-height: 100vh;
+        object-fit: contain;
+        margin: 0 auto;
+      }
+      @media print {
+        /* make sure the dark chart background actually prints */
+        body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      }
+    </style>
+  </head>
+  <body>
+    <img src="${imgData}" alt="Organizational Chart BME PTP" />
+  </body>
+</html>`);
+      printWindow.document.close();
+
+      // Wait for the image to decode before opening the print dialog, otherwise the
+      // preview can come up blank.
+      const img = printWindow.document.querySelector('img');
+      const startPrint = () => {
+        printWindow.focus();
+        printWindow.print();
+      };
+      if (img && !img.complete) {
+        img.onload = startPrint;
+        img.onerror = startPrint;
+      } else {
+        setTimeout(startPrint, 300);
+      }
+    } catch (err: any) {
+      console.error('Print error:', err);
+      if (showToast) showToast('error', `เกิดข้อผิดพลาดในการพิมพ์: ${err?.message || ''}`);
     } finally {
       setIsExporting(false);
     }
@@ -538,11 +627,16 @@ export function OrgChart({ currentUser, showToast }: OrgChartProps) {
           </button>
 
           <button
-            onClick={() => window.print()}
-            className="px-3.5 py-2 rounded-xl text-xs font-bold bg-slate-800 text-slate-200 hover:bg-slate-700 border border-slate-600 transition-all flex items-center gap-2"
+            onClick={handlePrint}
+            disabled={isExporting}
+            className="px-3.5 py-2 rounded-xl text-xs font-bold bg-slate-800 text-slate-200 hover:bg-slate-700 disabled:opacity-60 border border-slate-600 transition-all flex items-center gap-2"
             title="พิมพ์ลงกระดาษ หรือ บันทึกเป็น PDF ผ่านเบราว์เซอร์"
           >
-            <i className="fa-solid fa-print"></i>
+            {isExporting ? (
+              <i className="fa-solid fa-spinner fa-spin"></i>
+            ) : (
+              <i className="fa-solid fa-print"></i>
+            )}
             <span>พิมพ์ / Save PDF</span>
           </button>
         </div>

@@ -349,6 +349,23 @@ export function createApiApp(): express.Express {
         const coachRows = parseCSV(coachCsv);
         if (coachRows.length <= 1) continue;
 
+        // Google's gviz CSV endpoint does NOT error when the requested tab name doesn't
+        // exist — it quietly returns the FIRST tab of the spreadsheet instead. Guessing
+        // names like 'แผนพัฒนา'/'IDP' therefore kept returning the CSI form-responses tab,
+        // which was then parsed as coaching and produced junk cards (timestamp shown as a
+        // person's name, "Biomedical Engineering" as position, a rating digit as a topic).
+        // So: only accept a tab whose header actually looks like a coaching roster, and
+        // explicitly reject anything that looks like the CSI response sheet.
+        const headerJoined = coachRows[0].map(h => (h || '').trim().toLowerCase()).join(' | ');
+        const looksLikeCsi =
+          headerJoined.includes('ประทับเวลา') ||
+          headerJoined.includes('timestamp') ||
+          headerJoined.includes('division') ||
+          headerJoined.includes('ผู้ให้บริการ');
+        const coachingSignals = ['รหัส', 'ชื่อ', 'ตำแหน่ง', 'สัตว์', 'โค้ช', 'coach', 'position', 'nick', 'เล่น'];
+        const signalCount = coachingSignals.filter(s => headerJoined.includes(s)).length;
+        if (looksLikeCsi || signalCount < 3) continue;
+
         let empIdIdx = 0, typeIdx = 1, posIdx = 2, fullIdx = 3, nickIdx = 4, animalIdx = 5, coachIdx = 6, t1Idx = 7, t2Idx = 8, t3Idx = 9, scoreIdx = 10, progIdx = 11, totalHoursIdx = 12;
 
         const header = coachRows[0].map(h => (h || '').trim().toLowerCase());
@@ -374,11 +391,19 @@ export function createApiApp(): express.Express {
           if (cRow && cRow.length >= 3) {
             const cleanStr = (val: string) => (val || '').trim();
 
-            const empId = cleanStr(cRow[empIdIdx] || `emp_${j}`);
+            const empId = cleanStr(cRow[empIdIdx] || '');
             const contractType = cleanStr(cRow[typeIdx]).toLowerCase().includes('full') ? 'Full Time' : 'Out source';
             const position = cleanStr(cRow[posIdx] || 'Engineer');
             const fullName = cleanStr(cRow[fullIdx] || '');
             const nickname = cleanStr(cRow[nickIdx] || fullName || '');
+
+            // Skip anything that isn't a real person row. The old check fell back to a
+            // generated `emp_<row>` id, which made the condition below always true — so
+            // merged-cell header rows, section titles ("แผนกวิศวกรรมการแพทย์ BME") and
+            // blank spacer rows all became coaching cards with nonsense in every field.
+            const hasEmpId = /\d{4,}/.test(empId);
+            const hasRealName = /[ก-๛a-zA-Z]{2,}/.test(fullName) && !/^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}/.test(fullName);
+            if (!hasEmpId && !hasRealName) continue;
 
             const animalRaw = cleanStr(cRow[animalIdx]);
             let animalType = 'หมี';
@@ -396,7 +421,7 @@ export function createApiApp(): express.Express {
 
             if (fullName || nickname || empId) {
               parsedCoaching.push({
-                id: `coach-sheet-${empId}`,
+                id: `coach-sheet-${empId || nickname || fullName}`,
                 empId,
                 contractType,
                 position,

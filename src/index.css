@@ -119,3 +119,47 @@
   background: rgba(255, 255, 255, 0.25);
 }
 
+
+/* ============================================================
+   Print safety net
+   ------------------------------------------------------------
+   The app is a dark-themed full-screen layout, so a plain Ctrl+P
+   (or any stray window.print()) would otherwise put the sidebar,
+   header and toolbar buttons on paper and clip the content — the
+   dedicated export buttons handle their own isolated printing.
+   These rules make an accidental browser print at least usable.
+   ============================================================ */
+@media print {
+  /* Force the dark theme to render as readable dark-on-white */
+  html, body {
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  /* Navigation, toolbars and floating UI never belong on paper */
+  aside,
+  nav,
+  [data-print="hide"] {
+    display: none !important;
+  }
+
+  /* Let content use the full sheet instead of the app's fixed viewport */
+  main,
+  #root > div,
+  [data-print="area"] {
+    position: static !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  /* Avoid slicing cards across page boundaries */
+  .print-keep-together {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+}

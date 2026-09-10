@@ -12,6 +12,10 @@ interface CoachingDashboardProps {
 
 export function CoachingDashboard({ currentUser, showToast }: CoachingDashboardProps) {
   const [records, setRecords] = useState<CoachingRecord[]>([]);
+  // Employee roster, used only to resolve each coaching record's photo by employee id.
+  // Coaching records themselves carry no image, so without this the cards can only show
+  // a nickname initial.
+  const [employees, setEmployees] = useState<Employee[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedAnimal, setSelectedAnimal] = useState<string>('all');
   const [selectedType, setSelectedType] = useState<string>('all');
@@ -42,6 +46,25 @@ export function CoachingDashboard({ currentUser, showToast }: CoachingDashboardP
   const loadRecords = () => {
     const list = StorageService.getCoachingRecords();
     setRecords(list);
+    setEmployees(StorageService.getEmployees());
+  };
+
+  // Match a coaching record to its employee photo. Falls back to a generated avatar so a
+  // person missing from the roster still gets a picture instead of an empty box.
+  const photoByEmpId = useMemo(() => {
+    const map = new Map<string, string>();
+    employees.forEach(e => {
+      const key = String(e.username || e.id || '').trim();
+      if (key && e.img) map.set(key, e.img);
+    });
+    return map;
+  }, [employees]);
+
+  const getPhoto = (rec: CoachingRecord): string => {
+    const direct = photoByEmpId.get(String(rec.empId || '').trim());
+    if (direct) return direct;
+    const seed = encodeURIComponent(rec.nickname || rec.fullName || rec.empId || 'BME');
+    return `https://api.dicebear.com/7.x/initials/svg?seed=${seed}`;
   };
 
   const handleReset = () => {
@@ -433,12 +456,25 @@ export function CoachingDashboard({ currentUser, showToast }: CoachingDashboardP
                 <div>
                   <div className="flex items-start justify-between gap-2.5 mb-3">
                     <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-semibold text-xs shadow-2xs flex-shrink-0 border ${
-                        isLight
-                          ? 'bg-gradient-to-br from-indigo-500 to-purple-600 text-white border-indigo-200'
-                          : 'bg-gradient-to-br from-indigo-500/20 to-purple-600/20 text-white border-white/20'
+                      <div className={`relative w-10 h-10 rounded-xl overflow-hidden shadow-2xs flex-shrink-0 border ${
+                        isLight ? 'border-indigo-200' : 'border-white/20'
                       }`}>
-                        <span className="px-1 text-center truncate">{rec.nickname}</span>
+                        <img
+                          src={getPhoto(rec)}
+                          alt={rec.nickname || rec.fullName}
+                          className="w-full h-full object-cover"
+                          loading="lazy"
+                          onError={e => {
+                            const seed = encodeURIComponent(rec.nickname || rec.fullName || 'BME');
+                            (e.target as HTMLImageElement).src =
+                              `https://api.dicebear.com/7.x/initials/svg?seed=${seed}`;
+                          }}
+                        />
+                        {rec.nickname && (
+                          <span className="absolute inset-x-0 bottom-0 bg-black/55 text-white text-[8px] font-bold text-center leading-tight py-px truncate px-0.5">
+                            {rec.nickname}
+                          </span>
+                        )}
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5 flex-wrap">
